@@ -1,0 +1,360 @@
+# Phases 5-6: PR / Post-PR / Cleanup
+
+PR 作成からマージ後の片付けまでの 3 フェーズ詳細。SKILL.md 本体から「Phase 5 以降を実行するとき」「followup 自動 issue 化のロジックが必要なとき」に参照する。
+
+## Contents
+- [Phase 5: PR (プルリクエスト)](#phase-5-pr-プルリクエスト)
+- [Phase 5-bis: Post-PR Iteration](#phase-5-bis-post-pr-iteration)
+- [Phase 6: Cleanup (後片付け)](#phase-6-cleanup-後片付け)
+
+---
+
+## Phase 5: PR (プルリクエスト)
+
+**目的**: 変更を Draft PR として作成する。
+
+**注意**: git 操作は `git -C "$WT_PATH" ...`、`/pr-create` 等の委譲先スキルも `cd "$WT_PATH" && ...` で起点を揃える。
+
+### 前提条件 (厳守)
+
+Phase 5 に進む前に、以下を必ず満たす:
+
+- Phase 3 の全検証が PASS、または
+- 残る FAIL は全て「既存問題」かつ Phase 4-B でユーザーが「別 PR」または「スコープ外」を選択済み
+
+新規問題が未解消、または既存問題でユーザー確認が未実施の状態で Phase 5 に進むのは禁止。
+
+### 手順
+
+1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
+2. 変更内容を分析してコミットメッセージを作成
+3. コミット・プッシュ: `cd "$WT_PATH" && git add ... && git commit ... && git push -u origin "$BRANCH"`
+4. PR を作成 (`/pr-create` の手順に準拠):
+   - Draft PR として作成
+   - PR 説明に以下を含める:
+     - 変更内容のサマリー
+     - 計画ファイルへのリンク (`docs/plans/...`)
+     - 関連 ADR へのリンク (`docs/adr/...`)
+     - 検証結果のサマリー (種別を含む表)
+     - **既存問題の対応方針** (あった場合のみ):
+       - 「今回 PR で修正」: コミット履歴に `fix:` 等として残す
+       - 「別 PR で対応」: PR 説明に「main 既存の課題 (〜〜) は別 PR で対応予定」と明記
+       - 「スコープ外」: PR 説明に「main 既存の課題 (〜〜) は本 PR では対応しない」と明記
+5. 計画ファイルのステータスを `completed` に更新し、結果セクションを記入
+6. **セッションファイル更新**:
+   - `pr_url`: `gh pr view --json url -q .url` で取得
+   - `status`: `"pr-open"`
+   - `pr_opened_at`: ISO 8601 タイムスタンプ
+   - `updated_at`: 同上 (以後の post-PR 修正で更新される)
+7. ユーザーに PR URL を提示し、**「マージ後に `/dev cleanup` を実行すると worktree を掃除する」ことを明示**。必要なら post-PR 追加修正が `/dev resume <slug>` で再開できることも伝える
+
+---
+
+## Phase 5-bis: Post-PR Iteration
+
+**目的**: Draft PR 作成後・マージ前の追加修正で、コード修正だけでなく **PR 本文・検証結果・ADR リンクも同期更新**してドキュメント整合性を保つ。
+
+### 起動方法
+
+- `/dev resume` で `status == "pr-open"` のセッションを選択 → 自動で post-PR モード
+- `/dev resume <slug>` で直接指定
+- cwd が `status == "pr-open"` の worktree 配下 → セッション逆引きで post-PR モード
+- **通常の `/dev <説明>` では post-PR モードに入らない** (別タスク扱い)
+
+### 前提条件
+
+- セッションが存在し `status == "pr-open"`
+- `gh pr view "$PR_URL" --json state -q .state` が `OPEN` (`MERGED` なら cleanup へ、`CLOSED` なら AskUserQuestion で再 open or 中止)
+- worktree が存在し、リモート追跡ブランチが設定済み
+
+### フロー
+
+#### 1. セッション復元
+
+- `WT_PATH` / `BRANCH` / `PR_URL` / `plan_file` をセッションファイルから読み込む
+- Phase 0 の整合性チェック (worktree 存在、前提セットアップ設定) を再実行
+- 現在の PR 本文を `gh pr view "$PR_URL" --json body -q .body` で取得してキャッシュ
+
+#### 2. 追加修正を Phase 2 同等で実装
+
+- 変更内容は TaskCreate で管理
+- 設計判断が絡むなら ADR を追記 (新規 ADR 番号を採番)
+- 計画ファイル (`docs/plans/...`) の「変更履歴」節を追記 (なければ作る)
+
+#### 3. Phase 3 (検証) を再実行
+
+- 全検証コマンドを再実行 (変更箇所に限定しない — 回帰検出のため)
+- 失敗があれば Phase 4 の切り分けを再実行
+
+#### 4. Phase 4 を再実行 (必要時)
+
+- 新規 FAIL は修正
+- 既存 FAIL が新たに見つかれば followups[] に追記 (Phase 4-B の手順)
+
+#### 5. コミット + push
+
+```bash
+cd "$WT_PATH" && git add ... && git commit -m "..." && git push
+```
+
+PR のコミットは自動追従する (`gh pr edit` 不要)。
+
+#### 6. PR 本文の再生成と更新 (重要、手動では忘れやすい)
+
+PR 本文テンプレート (冒頭に変更履歴、以降は再生成):
+
+```markdown
+## Summary
+
+<当初の変更内容サマリ + 追加修正のサマリを統合>
+
+## 変更履歴
+
+- YYYY-MM-DD: 初回実装 (計画 ${plan_file})
+- YYYY-MM-DD: <追加修正の要約>  ← 今回追加
+<...以降の追加修正も順に追記>
+
+## 計画 / ADR
+
+- 計画: `docs/plans/...`
+- ADR: `docs/adr/...` (N 件)
+
+## 検証結果 (最新)
+
+| チェック | コマンド | 結果 | 種別 |
+|---------|---------|------|------|
+| ...     | ...     | PASS | -    |
+
+## 既存問題の対応方針 (あれば)
+
+- [別 PR] <followup[0].title> — 本 PR スコープ外、cleanup で issue 化予定
+- [スコープ外] <followup[1].title> — 本 PR では対応しない、cleanup で issue 化予定
+```
+
+更新コマンド:
+
+```bash
+NEW_BODY=$(mktemp)
+cat > "$NEW_BODY" <<EOF
+<上記テンプレートを slug / followups / 検証結果で埋めたもの>
+EOF
+gh pr edit "$PR_URL" --body-file "$NEW_BODY"
+rm -f "$NEW_BODY"
+```
+
+#### 7. title の更新 (必要時のみ)
+
+- スコープが実質的に変わった場合のみ `gh pr edit "$PR_URL" --title "..."`
+- 軽微な追加修正では title を変えない
+
+#### 8. セッションファイル更新
+
+- `updated_at`: ISO 8601 now
+- 必要なら `followups[]` 追記 (Phase 4-B で発生した分)
+- `post_pr_iterations`: カウンタ (何度 Phase 5-bis を回したか、任意)
+
+#### 9. ユーザー報告
+
+- 追加コミットの SHA、更新した PR 本文の要点、残 followup 数を提示
+- 「さらに追加修正する場合は `/dev resume <slug>`」を再掲
+
+### 禁止事項
+
+- PR 本文を更新せずにコミット + push だけで終えない (レビュアーから変更履歴が追えなくなる)
+- `gh pr edit --body` で本文を空にしない (`--body-file` を使う、`--body ""` は事故のもと)
+- マージ済み (`state == MERGED`) の PR を post-PR モードで再開しない (cleanup へ誘導)
+
+---
+
+## Phase 6: Cleanup (後片付け)
+
+**目的**: PR がマージされた後、worktree とブランチをローカルから削除し、セッションファイルを `cleaned` にする。
+
+**起動方法**: 通常の `/dev` フロー (Phase 0→5) からは自動実行しない。PR マージ確認は分〜日単位の非同期タスクなので、ユーザーが明示的に `/dev cleanup` で起動。
+
+### 呼び出し形態
+
+- `/dev cleanup` — 引数なし
+  - cwd を `git rev-parse --show-toplevel` で確認し、worktree 内なら対応セッションを特定
+  - cwd が main リポジトリ側 or セッション外なら、`~/.claude/dev-sessions/*.json` のうち `status == "pr-open"` を AskUserQuestion で選択
+- `/dev cleanup <branch>` — ブランチ名指定
+  - ブランチ名からセッションファイルを逆引き
+
+### 手順
+
+#### 1. セッションファイル読み込み
+
+```
+WT_PATH / REPO_ROOT / BRANCH / PR_URL を取得
+```
+
+セッション不存在時は AskUserQuestion で「PR URL を指定 / 中止」を確認 (緊急回復フロー)。
+
+#### 2. PR state の確認 (gh を真実とする)
+
+```bash
+STATE=$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)
+# または PR_URL が分かっていれば
+STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null)
+```
+
+- `MERGED` → 続行
+- `OPEN` / `CLOSED` / 取得失敗 → **自動削除はしない**。AskUserQuestion で:
+  - 「PR マージを待つ」→ cleanup を中断
+  - 「強制削除する (-D)」→ ユーザー明示同意のみ。理由を確認してログに残す
+  - 「中止」→ 終了
+
+#### 2.5. followup の自動 issue 化 (`MERGED` 確認後、worktree 削除前)
+
+**目的**: Phase 4-B で「別 PR」「スコープ外」として記録された項目を、merge タイミングで GitHub issue として登録し、永遠の放置を防ぐ。
+
+##### 1. followups の抽出
+
+セッションファイルの `followups[]` を読む。空なら本手順スキップ。各要素のうち `issue_url != null` は既に issue 化済みなのでスキップ (再実行冪等性)。
+
+##### 2. 既存 issue との重複チェック
+
+```bash
+# title の前半 40 文字で既存 issue を検索 (open/closed 両方、自リポジトリ限定)
+SEARCH_KEY=$(echo "$title" | head -c 40)
+EXISTING=$(gh issue list --state all --search "$SEARCH_KEY in:title" --json number,url --limit 5)
+# PR リンクで逆引き (body に元 PR URL を含む issue があれば重複)
+EXISTING_BY_PR=$(gh issue list --state all --search "\"$PR_URL\" in:body" --json number,url --limit 5)
+```
+
+どちらかで 1 件以上ヒット → **重複扱い**。該当 issue URL を `followup.issue_url` に記録して次へ。0 件 → 作成フェーズへ。
+
+##### 3. ラベル候補の取得
+
+`gh label list --json name` で既存ラベルを取得し、キーワードマッチで推定:
+
+- `decision == "separate-pr"` → `followup` / `tech-debt` / `enhancement` のうち存在するもの
+- `decision == "out-of-scope"` → `backlog` / `out-of-scope` / `followup` のうち存在するもの
+- `source.kind == "existing-verification-failure"` なら `bug` を追加候補に
+
+該当ラベルが 1 つも無ければラベルなしで作成 (ユーザーが後付けする前提)。
+
+##### 4. 一括作成前のまとめ確認 (件数 ≥ 5 のときのみ AskUserQuestion)
+
+```
+質問: 未着手の followup を 7 件検出しました。GitHub issue として一括作成しますか?
+選択肢:
+  A. 全件作成する
+  B. 選択して作成する (1 件ずつ確認)
+  C. 今回は作成しない (セッションには残す、次回 cleanup で再チェック)
+```
+
+4 件以下なら確認せず全件自動作成 (低 friction 方針)。
+
+##### 5. issue 作成
+
+```bash
+ISSUE_BODY=$(mktemp)
+cat > "$ISSUE_BODY" <<EOF
+## Context
+
+このタスクは [$PR_URL]($PR_URL) のマージ時に followup として自動登録されました。
+
+**元の決定**: $decision (${decision == "separate-pr" ? "別 PR で対応" : "スコープ外"})
+**発見経緯**: ${source.kind}
+**関連計画**: \`${plan_file}\`
+
+## 詳細
+
+$body
+
+---
+_Auto-created by \`/dev cleanup\` from session \`${slug}\`_
+EOF
+
+ISSUE_URL=$(gh issue create \
+  --title "$title" \
+  --body-file "$ISSUE_BODY" \
+  ${labels:+--label "$labels"} \
+  --json url -q .url)
+
+rm -f "$ISSUE_BODY"
+```
+
+作成失敗時 (権限不足・API エラー等) は警告を出してその followup は `issue_url: null` のまま残す。次回 cleanup で再試行。
+
+##### 6. セッションファイル更新
+
+各 followup の `issue_url` フィールドに作成 URL を書き戻す (手順 7 の `status: cleaned` 更新と一緒にアトミックに書く)。
+
+##### 7. ユーザー報告
+
+作成した issue の一覧、重複扱いで既存 issue にマップされた件数を表示。
+
+##### 禁止事項
+
+- `gh issue create` の `--body` 引数に shell 展開で長文を渡さない (改行・引用符でクラッシュ) → 必ず `--body-file`
+- `issue_url` が既に入っている followup を再作成しない (冪等性違反)
+- プロジェクトの issue テンプレートを無視しない — `.github/ISSUE_TEMPLATE/` があれば `--template` で指定するか、テンプレート本文を取り込んでから body 生成
+
+#### 3. worktree の未コミット変更チェック
+
+```bash
+git -C "$WT_PATH" status --porcelain
+```
+
+出力があれば中断し、ユーザーに報告。**自動で破棄しない** (意図しない作業を消さないため)。
+
+#### 4. 実行中プロセスの警告 (ベストエフォート、限定的)
+
+```bash
+lsof +D "$WT_PATH" 2>/dev/null | head
+```
+
+**注意**: この検査は worktree 内のファイルを開いているプロセス (worktree に `cd` したシェル等) しか捕まえない。**ポートだけを掴む dev server (例: `next dev`, `vite`, `rails server`) は検出されない**。ユーザーには「worktree で開いている shell や editor、バインドされた dev server をこちらで確認してから cleanup 実行」を促す。出力があれば警告のみ (kill はしない)。
+
+#### 5. worktree + ブランチ削除
+
+```bash
+git -C "$REPO_ROOT" wt -d "$BRANCH"
+```
+
+- 成功 → 次へ
+- 「not merged into default branch」等で拒否された場合 (squash/rebase merge で起こる):
+  - 既に手順 2 で `MERGED` を確認済みなので、AskUserQuestion で「強制削除 (`-D`) を実行する?」を確認
+  - 同意後: `git -C "$REPO_ROOT" wt -D "$BRANCH"`
+
+#### 6. リモートブランチの削除確認
+
+- GitHub 側で自動削除設定なら不要
+- そうでなければ AskUserQuestion で「リモートブランチも削除?」を確認
+  ```bash
+  git -C "$REPO_ROOT" push origin --delete "$BRANCH"
+  ```
+
+#### 7. セッションファイル更新
+
+```json
+{
+  ...既存フィールド,
+  "status": "cleaned",
+  "cleaned_at": "<ISO 8601 now>"
+}
+```
+
+#### 8. 最終確認レポート
+
+- 削除した worktree パス
+- 削除したローカルブランチ
+- リモートブランチの扱い (削除 / 保持)
+- **作成した GitHub issue 一覧** (手順 2.5 の結果、新規 / 既存にマップされた件数)
+- 参考: 残っている他セッション一覧 (`status: "pr-open"` / `"in-progress"`)
+
+### 前提条件
+
+以下が満たされない場合は中断:
+
+- gh CLI で認証済み (`gh auth status`)
+- セッションファイルが存在する or PR URL を引数で指定できる
+- worktree に未コミット変更がない (あれば中断してユーザーに対応依頼)
+
+### 禁止事項
+
+- **PR state が MERGED でない状態で自動削除しない** (`-D` フォールバックは明示ユーザー同意時のみ)
+- **未コミット変更を勝手に破棄しない**
+- **実行中プロセスを勝手に kill しない** (警告のみ)
