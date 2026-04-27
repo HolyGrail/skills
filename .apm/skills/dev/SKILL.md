@@ -2,6 +2,7 @@
 name: dev
 description: |
   git worktree (k1LoW/git-wt) 上にタスク専用環境を作り、Phase 0 (worktree 準備) → Plan → Implement → Verify → Fix → PR → Post-PR Iteration → Cleanup の一貫した開発ワークフローをセッション管理付きで実行する。新規タスクを隔離環境で進めたいとき、`/dev resume` で中断セッションを再開したいとき、`/dev cleanup` でマージ後の worktree とブランチを掃除したいときに使う。
+compatibility: Requires git, gh CLI, k1LoW/git-wt (`git wt`), and jq
 ---
 
 # Dev

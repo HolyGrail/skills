@@ -2,6 +2,7 @@
 name: task
 description: |
   専用エージェントを起動し、複数ツールを組み合わせた自律的な情報収集・分析・統合をコンテキスト効率を重視して実行する。複雑なコードベース調査・大規模ファイル検索・依存関係/競合/技術トレンドの外部情報収集・セキュリティ監査・パフォーマンス分析など、単発質問では収まらない多ソース・反復的な調査タスクをメインの会話を圧迫せずに任せたいときに使う。
+compatibility: Designed for Claude Code with Task tool support (subagent dispatching)
 ---
 
 ## Task
