@@ -2,6 +2,7 @@
 name: pr-review
 description: |
   PR を意図しない削除・データフロー破壊・正確性・セキュリティ・パフォーマンス・アーキテクチャの観点で体系的にレビューし、critical.must / high.imo / medium.imo / low.nits / info.q の 5 分類で建設的フィードバックを返す。マージ前に PR の品質・既存機能の保全・SOLID/レイヤー分離を確認したいときに使う。
+compatibility: Requires gh CLI for fetching PR diffs and posting review comments
 ---
 
 ## PR Review
