@@ -18,7 +18,7 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 
 長大な multi-phase workflow (例: `dev`, `spec`) は **Skill 扱い** にしている。Skill が Claude Code 側で slash command として呼べるかは Claude Code のロード方式次第なので、`~/.claude/commands/` への手動コピーで `/dev` を維持したい場合は本リポジトリの Skill 本文を流用する。
 
-## 収録 Skill / Prompt
+## 収録 Skill / Prompt / Agent
 
 ### Skills (20)
 
@@ -65,6 +65,21 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 | `update-doc-string` | 言語別スタイル準拠の docstring 整備 |
 | `update-node-deps` | npm 依存関係更新の安全性評価 |
 
+### Agents (8)
+
+`role` / `role-debate` / `role-help` などの skill から呼び出される専門サブエージェント定義。Claude Code subagent 互換 frontmatter (`name` / `description` / `tools`) のまま `.apm/agents/` にフラット配置している。
+
+| name | 概要 (description 抜粋) |
+|---|---|
+| `analyzer` | 根本原因分析 (5 Whys、システム思考、Evidence-First) |
+| `architect` | システム設計 (Evidence-First、MECE、進化的アーキテクチャ) |
+| `frontend` | UI/UX (WCAG 2.1、デザインシステム、React/Vue/Angular) |
+| `mobile` | モバイル開発 (iOS HIG、Material Design、Touch-First) |
+| `performance` | パフォーマンス最適化 (Core Web Vitals、RAIL、ROI) |
+| `qa` | テスト戦略 (E2E/統合/単体、自動化、品質メトリクス) |
+| `reviewer` | コードレビュー (Evidence-First、Clean Code、公式スタイル) |
+| `security` | セキュリティ (OWASP Top 10、CVE、LLM/AI セキュリティ) |
+
 ## ディレクトリ構造
 
 ```
@@ -72,7 +87,8 @@ holygrail-skills/
 ├── apm.yml                   # APM マニフェスト
 ├── .apm/                     # ソース (APM 規約)
 │   ├── skills/<name>/SKILL.md
-│   └── prompts/<name>.prompt.md
+│   ├── prompts/<name>.prompt.md
+│   └── agents/<name>.agent.md
 ├── .gitignore                # コンパイル成果物は除外
 └── README.md
 ```
@@ -108,6 +124,9 @@ cp -r .apm/skills/<name> ~/.claude/skills/
 
 # Prompt を Claude Code の slash command として使う
 cp .apm/prompts/<name>.prompt.md ~/.claude/commands/<name>.md
+
+# Agent (subagent ロール) を Claude Code に入れる
+cp .apm/agents/<name>.agent.md ~/.claude/agents/<name>.md
 ```
 
 Claude Code は slash command の frontmatter (`description` / `allowed-tools` / `model` 等) を読み取って一覧表示等に活用するため、`.prompt.md` の frontmatter はそのまま意味を持つ。
@@ -125,9 +144,9 @@ Claude Code は slash command の frontmatter (`description` / `allowed-tools` /
 
 `dev` / `spec` / `role-debate` 等の多段ワークフローは Skill 配置にした。理由は本体ロジックが「方法論」であり Prompt より長尺で、agent 側で自律発動できる方が再利用性が高いため。ユーザーが `/dev` 起動エントリを維持したい場合は手動コピー B で `~/.claude/commands/dev.md` を残すのが楽。
 
-### `agents/` (subagent ロール定義) は今回スコープ外
+### `agents/` (subagent ロール定義) の取り扱い
 
-`~/.claude/agents/roles/` 配下の 8 ロール (analyzer / architect / frontend / mobile / performance / qa / reviewer / security) は次回フォローアップで `.apm/agents/<name>.agent.md` フラット配置で取り込む予定。
+`~/.claude/agents/roles/` 配下の 8 ロール (analyzer / architect / frontend / mobile / performance / qa / reviewer / security) は `.apm/agents/<name>.agent.md` のフラット配置で取り込み済み。frontmatter は Claude Code subagent 互換 (`name` / `description` / `tools`) をそのまま流用しており、APM コンパイル先 (`.claude/agents/`) と手動コピー両方で同じファイルが使える。
 
 ## 既存 skill の見直し結果
 
