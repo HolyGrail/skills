@@ -1,7 +1,7 @@
 ---
 name: role-help
 description: |
-  security / architect / performance / analyzer / frontend / mobile / reviewer / qa など利用可能なロールの特徴・得意分野・苦手分野を比較表とフローチャートで提示し、状況や問題内容から最適なロール（または multi-role / role-debate / smart-review）を推奨する。どのロールを使うべきか判断に迷ったとき、または `compare <role1>,<role2>` で 2 ロールの違いを確認したいときに使う。
+  security / architect / performance / analyzer / frontend / mobile / reviewer / qa など利用可能なロールの特徴・得意分野・苦手分野を比較表とフローチャートで提示し、状況や問題内容から最適なロール（または multi-role / role-debate / smart-review）を推奨する。どのロールを使うべきか判断に迷ったとき、または `compare [role1],[role2]` で 2 ロールの違いを確認したいときに使う。
 ---
 
 ## Role Help
