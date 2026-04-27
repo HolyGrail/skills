@@ -1,0 +1,14 @@
+name: holygrail-skills
+version: 0.1.0
+description: HolyGrail's curated Claude Code skills and prompts (APM-compatible).
+author: HolyGrail
+license: MIT
+target: claude
+type: hybrid
+includes: auto
+
+dependencies:
+  apm: []
+  mcp: []
+
+scripts: {}
