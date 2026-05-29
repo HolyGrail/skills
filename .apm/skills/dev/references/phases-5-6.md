@@ -29,24 +29,125 @@ Phase 5 に進む前に、以下を必ず満たす:
 1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
 2. 変更内容を分析してコミットメッセージを作成
 3. コミット・プッシュ: `cd "$WT_PATH" && git add ... && git commit ... && git push -u origin "$BRANCH"`
-4. PR を作成 (`/pr-create` の手順に準拠):
-   - Draft PR として作成
-   - PR 説明に以下を含める:
-     - 変更内容のサマリー
-     - 計画ファイルへのリンク (`docs/plans/...`)
-     - 関連 ADR へのリンク (`docs/adr/...`)
-     - 検証結果のサマリー (種別を含む表)
-     - **既存問題の対応方針** (あった場合のみ):
-       - 「今回 PR で修正」: コミット履歴に `fix:` 等として残す
-       - 「別 PR で対応」: PR 説明に「main 既存の課題 (〜〜) は別 PR で対応予定」と明記
-       - 「スコープ外」: PR 説明に「main 既存の課題 (〜〜) は本 PR では対応しない」と明記
-5. 計画ファイルのステータスを `completed` に更新し、結果セクションを記入
-6. **セッションファイル更新**:
+4. **Test plan 構築**: 計画ファイルの「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は次節「Test plan 構築ルール」)
+5. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は次節「PR body テンプレート」と「PR 作成コマンド」):
+   - `--draft` 必須
+   - **Claude Code デフォルトテンプレート (`## Summary` / `## Test plan` の素のプレースホルダ `[Bulleted markdown checklist of TODOs...]`) にフォールバックしない**。本フェーズで構築済みの body をそのまま使う
+   - `/pr-create` slash command に **委譲しない** (デフォルトテンプレートに戻る原因になる)
+6. 計画ファイルのステータスを `completed` に更新し、結果セクションを記入
+7. **セッションファイル更新**:
    - `pr_url`: `gh pr view --json url -q .url` で取得
    - `status`: `"pr-open"`
    - `pr_opened_at`: ISO 8601 タイムスタンプ
    - `updated_at`: 同上 (以後の post-PR 修正で更新される)
-7. ユーザーに PR URL を提示し、**「マージ後に `/dev cleanup` を実行すると worktree を掃除する」ことを明示**。必要なら post-PR 追加修正が `/dev resume <slug>` で再開できることも伝える
+8. ユーザーに PR URL を提示し、**「マージ後に `/dev cleanup` を実行すると worktree を掃除する」ことを明示**。必要なら post-PR 追加修正が `/dev resume <slug>` で再開できることも伝える
+
+### Test plan 構築ルール
+
+PR body の Test plan は **「自分で確認できる範囲は確認した状態で PR を出す」** ことを目的とする。Phase 3 の自動検証だけでは計画ファイル「検証方法」節の項目をカバーしきれないことがある (例: dev server を起動した上での疎通、ローカル DB へのマイグレーション適用など)。これらを **Phase 5 内で能動的に追加実行** し、`[x]` でチェック済みにする。
+
+#### 1. 計画ファイルの「検証方法」節を全項目列挙する
+
+各項目について、次の二択を判定する。
+
+- **ローカル検証可能**: worktree 内で完結するコマンド・操作で検証できる。例:
+  - 自動検証コマンド (`vitest`, `eslint`, `tsc`, `npm run build` 等)
+  - dev server を起動した上での `curl` / HTTP リクエスト
+  - ローカル DB / ローカルストレージ (D1 `--local`, sqlite ファイル, ローカル R2 等) への適用・読み出し
+  - 生成されたファイルの存在確認・内容確認 (`ls`, `cat`, `grep`, スキーマ妥当性など)
+  - ユニットテストや統合テスト (worktree 内で完結する範囲)
+- **人手必須**: 上記で完結しない、人の判断・他環境への到達が必要なもの。例:
+  - Browser での UI / UX 目視確認 (Playwright MCP 等で自動化していない限り)
+  - staging / production / 他チーム環境への適用、デプロイ後の動作確認
+  - 第三者による目視レビュー (デザインレビュー、セキュリティレビューの目視確認等)
+  - 本番アカウントでの API 疎通、有償外部サービスでの動作確認
+  - 「実機 (iOS / Android / 特定 OS バージョン) での動作確認」のような物理デバイス必須項目
+
+判定が曖昧な場合 (例: マイグレーションの破壊的影響確認は本番データが必要か、ローカルでも十分か) は AskUserQuestion で確認する。**推測で「人手必須」に逃げない**。
+
+#### 2. ローカル検証可能項目の処理
+
+| 状態 | 処理 |
+|---|---|
+| Phase 3 で実行済み + PASS | `[x]` でチェック、Phase 3 結果 (コマンド + 結果) を併記 |
+| Phase 3 で実行済み + FAIL かつ Phase 4 で解消 | `[x]` でチェック、最終的な PASS 結果を併記 |
+| Phase 3 で未実行 | **Phase 5 内で能動的に実行する**。実行して PASS なら `[x]`、FAIL なら Phase 4-A の修正ループに戻る |
+| 環境制約で実行不能 (依存ツール未インストール、ネットワーク隔離等) | `[ ]` のまま、項目に **「未実行 — 理由: <具体的な理由>」** を併記。**実行していないのに `[x]` を付けない** |
+
+#### 3. 人手必須項目の処理
+
+`[ ]` のまま残し、項目末尾に **「(人手必須)」** または「(レビュアー / リリース担当が確認)」を明記する。可能であれば確認手順 (URL、操作シーケンス、期待結果) を併記すると親切。
+
+#### 4. 捏造禁止 (重要)
+
+- **実行していない検証項目を `[x]` にしない**。
+- **「ロールプレイ」「仮に PASS したものとして」「想定では成功」のような擬似結果を PR body に書かない**。
+- 実行できなかった理由がある場合は `[ ]` + 未実行理由を明記する。
+- ローカルで実行したが標準出力に PASS と明示されない種類のチェック (例: ファイル存在確認) は、観測した事実 (例: `ls migrations/0007_add_status.sql` の出力) を併記する。
+
+### PR body テンプレート
+
+Phase 5 (初回 PR 作成) の body は次のフォーマットで生成する。Phase 5-bis のテンプレートから「変更履歴」節を除いた形 (Post-PR 追加修正が発生したら 5-bis でその節が追加される)。
+
+```markdown
+## Summary
+
+<3-7 行で変更の目的と主要な構成要素>
+
+## 計画 / ADR
+
+- 計画: `docs/plans/<YYYY-MM-DD>-<slug>.md`
+- ADR: `docs/adr/...` (N 件、なければ「なし」と明記)
+
+## 検証結果 (Phase 3 自動検証)
+
+| チェック | コマンド | 結果 | 種別 |
+|---------|---------|------|------|
+| 型チェック | `tsc --noEmit` | PASS | 自動 |
+| Lint     | `eslint .`   | PASS | 自動 |
+| ...     | ...         | ...  | ...  |
+
+## Test plan
+
+ローカル検証可能項目 (Phase 3 + Phase 5 で実行済み):
+
+- [x] <項目>: `<実行コマンド>` → <結果>
+- [x] ...
+
+人手必須項目 (マージ前にレビュアー / リリース担当が確認):
+
+- [ ] <項目> (人手必須) — <確認手順 / 確認すべき URL / 期待結果>
+
+未実行項目 (環境制約で Phase 5 内で実行できなかったもの、あれば):
+
+- [ ] <項目> — 未実行 (理由: <具体的な理由>)
+
+## 既存問題の対応方針 (あった場合のみ)
+
+- [今回 PR で修正] <内容> — コミット `<sha>` で対応
+- [別 PR] <followup の title> — cleanup 時に issue 化予定
+- [スコープ外] <followup の title> — 本 PR では対応しない、cleanup 時に issue 化予定
+```
+
+### PR 作成コマンド
+
+```bash
+PR_BODY=$(mktemp -t pr-body.XXXXXX.md)
+cat > "$PR_BODY" <<'EOF'
+<上記テンプレートを Test plan 構築ルールに従って埋めたもの>
+EOF
+
+cd "$WT_PATH" && gh pr create \
+  --draft \
+  --base "$DEFAULT_BRANCH" \
+  --head "$BRANCH" \
+  --title "<コミットメッセージから派生したタイトル>" \
+  --body-file "$PR_BODY"
+
+rm -f "$PR_BODY"
+```
+
+`gh pr create` 実行後、`gh pr view --json url -q .url` で URL を取得しセッションファイルに記録する (手順 7)。
 
 ---
 
@@ -248,8 +349,10 @@ EXISTING_BY_PR=$(gh issue list --state all --search "\"$PR_URL\" in:body" --json
 
 ##### 5. issue 作成
 
+**body-file は必ず `mktemp` で動的パスを取得する** (`/tmp/followup-1.md` のような固定名は別セッション・別 worktree が同名ファイルを書き残しているリスクがあるため絶対に使わない。固定名を再利用すると、古いセッションが残した内容をそのまま投稿してしまい、タイトルと本文が乖離するハイブリッド issue が発生しうる)。
+
 ```bash
-ISSUE_BODY=$(mktemp)
+ISSUE_BODY=$(mktemp -t followup.XXXXXX)
 cat > "$ISSUE_BODY" <<EOF
 ## Context
 
@@ -266,6 +369,12 @@ $body
 ---
 _Auto-created by \`/dev cleanup\` from session \`${slug}\`_
 EOF
+
+# 投稿前に body-file の中身を必ず検証 (Write tool が <tool_use_error> で失敗しても
+# 後続コマンドで気づけるように、想定文言を含むことを head で目視確認する)
+head -c 300 "$ISSUE_BODY"
+# 出力に "## Context" や PR_URL などタイトルから期待される文言が含まれるか確認。
+# 含まれない / 全く別の話題に見える場合は投稿を中止し、ファイル生成からやり直す。
 
 ISSUE_URL=$(gh issue create \
   --title "$title" \
@@ -289,6 +398,8 @@ rm -f "$ISSUE_BODY"
 ##### 禁止事項
 
 - `gh issue create` の `--body` 引数に shell 展開で長文を渡さない (改行・引用符でクラッシュ) → 必ず `--body-file`
+- `--body-file` のパスに `/tmp/followup-1.md` 等の **固定名を使わない**。必ず `mktemp -t followup.XXXXXX` で動的パスを取る (別 worktree / 別セッションが同じ `/tmp` を共有しているため、固定名は他セッションの古い内容を投稿する事故を起こす)
+- **Write tool / `cat > $BODY` の結果を確認せずに `gh issue create` に進まない**。`head -c 300 "$BODY"` で先頭が想定通りか目視確認する。Write tool は `<tool_use_error>File has not been read yet` で拒否されることがあり、エラーを見逃すと「タイトルは新しい意図、本文は別セッションの古いファイル」というハイブリッド issue が作成される
 - `issue_url` が既に入っている followup を再作成しない (冪等性違反)
 - プロジェクトの issue テンプレートを無視しない — `.github/ISSUE_TEMPLATE/` があれば `--template` で指定するか、テンプレート本文を取り込んでから body 生成
 
