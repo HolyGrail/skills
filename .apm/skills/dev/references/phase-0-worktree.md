@@ -14,7 +14,7 @@ git worktree (k1LoW/git-wt) でタスク専用環境を準備する詳細手順�
 - [手順 7: worktree 新規作成](#手順-7-worktree-新規作成)
 - [手順 8: セッションポインタ保存](#手順-8-セッションポインタ保存)
 - [手順 9: 以降の Bash 呼び出しの基本形](#手順-9-以降の-bash-呼び出しの基本形)
-- [フォールバックと例外時の AskUserQuestion](#フォールバックと例外時のaskuserquestion)
+- [フォールバックと例外時の自動対応](#フォールバックと例外時の自動対応)
 
 ## 目的と実行コンテキスト
 
@@ -75,10 +75,15 @@ readarray -d '' -t IGNORED_ENV   < <(git -C "$REPO_ROOT" ls-files -z --others --
 ## 手順 1: リポジトリ判定と root 取得
 
 ```bash
+# git-wt の存在確認は必ず command -v で行う。
+# git wt version / git wt check のような「裸の単語」は worktree+branch を誤作成するので絶対に使わない。
+command -v git-wt >/dev/null || echo "git-wt 未検出"
+# バージョンを出したい場合のみ: git-wt --version
+
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 ```
 
-取れなかった場合は git 管理外。AskUserQuestion で「worktree なしで従来動作に戻す / 中止」を確認。
+`git-wt` が未検出なら、後段の worktree 作成は失敗するので従来動作 (worktree なし) に自動フォールバックする (詳細は末尾「フォールバックと例外時の自動対応」)。`REPO_ROOT` が取れなかった場合は git 管理外なので、状況を報告して中断する。
 
 ## 手順 2: 既に worktree 内か判定
 
@@ -106,10 +111,9 @@ DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 - タスク説明から英語ケバブケース slug を自動生成 (例: `profile-image-upload`)
 - 接頭辞はタスク説明から判定: 追加/新機能 → `feat-`、修正 → `fix-`、リファクタ → `refactor-`、雑務 → `chore-`、ドキュメント → `docs-`
 - プロジェクト慣習があれば `git -C "$REPO_ROOT" branch -a | head -30` を見て既存命名パターンに寄せる (例: `feature/` / `bugfix/` が多数派ならそれに従う)
-- **AskUserQuestion は原則使わない**。以下の例外のみ確認:
-  - ローカル/リモートで同名ブランチが既に存在し、再利用 (手順 6) に該当しない
-  - タスク説明が極端に短く (20 文字未満など) slug が意味のある英単語にならない
-- 例外時は候補 2-3 つを提示し、ユーザーが簡単に別名を入力できるようにする
+- **AskUserQuestion は使わない**。例外的な状況も自動解決する:
+  - ローカル/リモートで同名ブランチが既に存在し、再利用 (手順 6) に該当しない → 末尾に `-2`, `-3` … の連番を付与して回避し、ナレーションで報告する
+  - タスク説明が極端に短く (20 文字未満など) slug が意味のある英単語にならない → コードベース調査の結果から最も内容を説明する slug を自分で決めて続行する
 
 ## 手順 5: origin を fetch
 
@@ -158,14 +162,14 @@ WT_PATH=$(git -C "$REPO_ROOT" wt --json \
   "worktree_path": "/abs/path/to/repo/.wt/feat-profile-image-upload",
   "repo_root": "/abs/path/to/repo",
   "default_branch": "main",
-  "plan_file": null,
+  "plan_issue": null,
   "pr_url": null,
   "status": "in-progress",
   "created_at": "<ISO 8601 now>"
 }
 ```
 
-`plan_file` は Phase 1 終了時に更新、`pr_url` / `status: "pr-open"` は Phase 5 終了時に更新する。詳細スキーマは [session-management.md](session-management.md) 参照。
+`plan_issue` は Phase 1 終了時 (計画 issue の作成 / 採用後) に更新、`pr_url` / `status: "pr-open"` は Phase 5 終了時に更新する。詳細スキーマは [session-management.md](session-management.md) 参照。
 
 ## 手順 9: 以降の Bash 呼び出しの基本形
 
@@ -173,22 +177,15 @@ WT_PATH=$(git -C "$REPO_ROOT" wt --json \
 - 単発の git 操作は `git -C "$WT_PATH" <コマンド>` でも可
 - **`cd` 単体コマンドは意味がない** (次の Bash 呼び出しに cwd は引き継がれない)
 
-## フォールバックと例外時の AskUserQuestion
+## フォールバックと例外時の自動対応
 
-### ブランチ衝突・命名不能の例外時
+### ブランチ衝突・命名不能
 
-```
-質問: ブランチ `feat-profile-image-upload` は既に別作業で使われています
-
-選択肢:
-  A. feat-profile-image-upload-v2
-     末尾に連番を付与
-  B. feat-profile-avatar-upload
-     意味的に近い別名
-  C. 別名を指定する
-     ユーザー入力
-```
+手順 4 のとおり自動解決する (連番付与 / 調査結果からの命名)。ユーザー確認のために停止しない。
 
 ### worktree 作成失敗時
 
-リポジトリでない / git-wt コマンド未検出 / worktree 作成失敗時は AskUserQuestion で「従来動作 (worktree なし) で続行 / 中止」を選ばせる。
+- **git リポジトリでない** (`REPO_ROOT` が取れない): ワークフローの前提を満たさないので、状況を報告して中断する (リポジトリの用意はユーザーにしか決められない)
+- **git-wt 未検出 / worktree 作成失敗**: 警告して **従来動作 (worktree なし、main リポジトリ上に新規ブランチを作成) に自動フォールバックする**。`WT_PATH="$REPO_ROOT"` とし、セッションファイルの `worktree_path` にも同じパスを記録する。フォールバックした事実と理由をナレーションで報告し、計画 issue の「結果」節にも残す (後から worktree 隔離が無かったことを追える状態にする)
+
+git-wt の存在確認は `command -v git-wt` で行い、**`git wt version` 等の裸の単語で確認しない** (worktree+branch を誤作成する。手順 1 と SKILL.md の Gotchas 参照)。

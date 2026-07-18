@@ -11,7 +11,7 @@ PR 作成からマージ後の片付けまでの 3 フェーズ詳細。SKILL.md
 
 ## Phase 5: PR (プルリクエスト)
 
-**目的**: 変更を Draft PR として作成する。
+**目的**: 変更を **Open PR** として作成し (Draft にしない)、Phase 5.5 (CI + Review Loop) へ自動続行する。
 
 **注意**: git 操作は `git -C "$WT_PATH" ...`、`/pr-create` 等の委譲先スキルも `cd "$WT_PATH" && ...` で起点を揃える。
 
@@ -20,33 +20,36 @@ PR 作成からマージ後の片付けまでの 3 フェーズ詳細。SKILL.md
 Phase 5 に進む前に、以下を必ず満たす:
 
 - Phase 3 の全検証が PASS、または
-- 残る FAIL は全て「既存問題」かつ Phase 4-B でユーザーが「別 PR」または「スコープ外」を選択済み
+- 残る FAIL は全て「既存問題」かつ Phase 4-B の自動判断マトリクスで「separate-pr」または「out-of-scope」が確定済み (PR 本文に明記する前提)
 
-新規問題が未解消、または既存問題でユーザー確認が未実施の状態で Phase 5 に進むのは禁止。
+新規問題が未解消、または既存問題の対応が未確定の状態で Phase 5 に進むのは禁止。
 
 ### 手順
 
 1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
 2. 変更内容を分析してコミットメッセージを作成
 3. コミット・プッシュ: `cd "$WT_PATH" && git add ... && git commit ... && git push -u origin "$BRANCH"`
-4. **Test plan 構築**: 計画ファイルの「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は次節「Test plan 構築ルール」)
+4. **Test plan 構築**: 計画 issue の「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は次節「Test plan 構築ルール」)
 5. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は次節「PR body テンプレート」と「PR 作成コマンド」):
-   - `--draft` 必須
+   - **`--draft` を付けない (Open PR として作成する)**。Codex が設定されたリポジトリでは PR open をトリガーに自動レビューが走り、CI もこの時点で起動する — Phase 5.5 がそのまま両方を監視する
    - **Claude Code デフォルトテンプレート (`## Summary` / `## Test plan` の素のプレースホルダ `[Bulleted markdown checklist of TODOs...]`) にフォールバックしない**。本フェーズで構築済みの body をそのまま使う
    - `/pr-create` slash command に **委譲しない** (デフォルトテンプレートに戻る原因になる)
-6. 計画ファイルのステータスを `completed` に更新し、結果セクションを記入
+6. 計画 issue の本文を更新: ステータス行を `completed` にし、「結果」節を記入する (`gh issue edit <番号> --body-file`、mktemp + head 検証 + cognitive-rhythm-writing 推敲のルールは issue 作成時と同じ)。**issue のクローズはここでは行わない** — この PR で計画 issue の全項目が完結するなら PR body の `Closes #<番号>` によるマージ時自動クローズに任せ、計画 issue が複数 PR で消化するチェックリスト形式なら `Closes` を使わず部分消化を明示する (グローバル CLAUDE.md「Issue 管理」ルール)
 7. **セッションファイル更新**:
    - `pr_url`: `gh pr view --json url -q .url` で取得
    - `status`: `"pr-open"`
    - `pr_opened_at`: ISO 8601 タイムスタンプ
    - `updated_at`: 同上 (以後の post-PR 修正で更新される)
-8. ユーザーに PR URL を提示し、**「マージ後に `/dev cleanup` を実行すると worktree を掃除する」ことを明示**。必要なら post-PR 追加修正が `/dev resume <slug>` で再開できることも伝える
+8. **Phase 5.5 (CI + Review Loop) へ自動続行する**: PR URL をユーザーにナレーションで提示した上で、そのまま [phase-5.5-review-loop.md](phase-5.5-review-loop.md) の監視ループに入る (`/dev review` の明示起動を待たない)。CI 全成功 + approved で終端し、完了報告とあわせて次を案内する:
+   - 人手主導で追加修正したい場合は `/dev resume <slug>` (Phase 5-bis)
+   - セッションが中断した場合は `/dev review <slug>` でループを再開できる
+   - **マージ後に `/dev cleanup` を実行すると worktree を掃除する**
 
 ### Test plan 構築ルール
 
-PR body の Test plan は **「自分で確認できる範囲は確認した状態で PR を出す」** ことを目的とする。Phase 3 の自動検証だけでは計画ファイル「検証方法」節の項目をカバーしきれないことがある (例: dev server を起動した上での疎通、ローカル DB へのマイグレーション適用など)。これらを **Phase 5 内で能動的に追加実行** し、`[x]` でチェック済みにする。
+PR body の Test plan は **「自分で確認できる範囲は確認した状態で PR を出す」** ことを目的とする。Phase 3 の自動検証だけでは計画 issue「検証方法」節の項目をカバーしきれないことがある (例: dev server を起動した上での疎通、ローカル DB へのマイグレーション適用など)。これらを **Phase 5 内で能動的に追加実行** し、`[x]` でチェック済みにする。
 
-#### 1. 計画ファイルの「検証方法」節を全項目列挙する
+#### 1. 計画 issue の「検証方法」節を全項目列挙する
 
 各項目について、次の二択を判定する。
 
@@ -63,7 +66,7 @@ PR body の Test plan は **「自分で確認できる範囲は確認した状�
   - 本番アカウントでの API 疎通、有償外部サービスでの動作確認
   - 「実機 (iOS / Android / 特定 OS バージョン) での動作確認」のような物理デバイス必須項目
 
-判定が曖昧な場合 (例: マイグレーションの破壊的影響確認は本番データが必要か、ローカルでも十分か) は AskUserQuestion で確認する。**推測で「人手必須」に逃げない**。
+判定が曖昧な場合 (例: マイグレーションの破壊的影響確認は本番データが必要か、ローカルでも十分か) は「worktree 内で実行する手段が組めるか」を基準に自分で判定する。組めるなら実行して `[x]`、組めないなら人手必須に分類し、**何が足りなくてローカルで実行できないのか**を理由として併記する。**推測で「人手必須」に逃げない** — 実行手段を検討した形跡を理由に残す。
 
 #### 2. ローカル検証可能項目の処理
 
@@ -80,8 +83,7 @@ PR body の Test plan は **「自分で確認できる範囲は確認した状�
 
 #### 4. 捏造禁止 (重要)
 
-- **実行していない検証項目を `[x]` にしない**。
-- **「ロールプレイ」「仮に PASS したものとして」「想定では成功」のような擬似結果を PR body に書かない**。
+- **実行していない検証項目を `[x]` にしない**。**「ロールプレイ」「仮に PASS したものとして」「想定では成功」のような擬似結果も PR body に書かない**。
 - 実行できなかった理由がある場合は `[ ]` + 未実行理由を明記する。
 - ローカルで実行したが標準出力に PASS と明示されない種類のチェック (例: ファイル存在確認) は、観測した事実 (例: `ls migrations/0007_add_status.sql` の出力) を併記する。
 
@@ -96,7 +98,9 @@ Phase 5 (初回 PR 作成) の body は次のフォーマットで生成する�
 
 ## 計画 / ADR
 
-- 計画: `docs/plans/<YYYY-MM-DD>-<slug>.md`
+- 計画 issue: <plan_issue の URL>
+  - 全項目をこの PR で消化する場合: `Closes #<番号>` をここに書く
+  - 部分消化の場合: `Closes` を使わず「issue #<番号> の <M> 項目目を消化」のように明示する
 - ADR: `docs/adr/...` (N 件、なければ「なし」と明記)
 
 ## 検証結果 (Phase 3 自動検証)
@@ -138,7 +142,6 @@ cat > "$PR_BODY" <<'EOF'
 EOF
 
 cd "$WT_PATH" && gh pr create \
-  --draft \
   --base "$DEFAULT_BRANCH" \
   --head "$BRANCH" \
   --title "<コミットメッセージから派生したタイトル>" \
@@ -153,12 +156,13 @@ rm -f "$PR_BODY"
 
 ## Phase 5-bis: Post-PR Iteration
 
-**目的**: Draft PR 作成後・マージ前の追加修正で、コード修正だけでなく **PR 本文・検証結果・ADR リンクも同期更新**してドキュメント整合性を保つ。
+**目的**: PR 作成後・マージ前の追加修正で、コード修正だけでなく **PR 本文・検証結果・ADR リンクも同期更新**してドキュメント整合性を保つ。
+
+> **Phase 5-bis と Phase 5.5 の違い**: 5-bis は **人手主導**の追加修正 (`/dev resume`)。CI と Codex 自動レビューへの **能動監視・フル自動対応** は Phase 5.5 (Phase 5 から自動突入、再開は `/dev review`。[phase-5.5-review-loop.md](phase-5.5-review-loop.md))。両者は本節の PR 本文同期ルール (Test plan 保持・変更履歴) と `followups[]` を共有する。5-bis で push した後は Phase 5.5 のループに戻り、CI 全成功 + approved を再確認する。
 
 ### 起動方法
 
-- `/dev resume` で `status == "pr-open"` のセッションを選択 → 自動で post-PR モード
-- `/dev resume <slug>` で直接指定
+- `/dev resume` でセッション一覧から `status == "pr-open"` を選択、または `/dev resume <slug>` で直接指定 → 自動で post-PR モード
 - cwd が `status == "pr-open"` の worktree 配下 → セッション逆引きで post-PR モード
 - **通常の `/dev <説明>` では post-PR モードに入らない** (別タスク扱い)
 
@@ -172,7 +176,7 @@ rm -f "$PR_BODY"
 
 #### 1. セッション復元
 
-- `WT_PATH` / `BRANCH` / `PR_URL` / `plan_file` をセッションファイルから読み込む
+- `WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` をセッションファイルから読み込む
 - Phase 0 の整合性チェック (worktree 存在、前提セットアップ設定) を再実行
 - 現在の PR 本文を `gh pr view "$PR_URL" --json body -q .body` で取得してキャッシュ
 
@@ -180,7 +184,7 @@ rm -f "$PR_BODY"
 
 - 変更内容は TaskCreate で管理
 - 設計判断が絡むなら ADR を追記 (新規 ADR 番号を採番)
-- 計画ファイル (`docs/plans/...`) の「変更履歴」節を追記 (なければ作る)
+- 計画 issue 本文の「変更履歴」節を追記 (なければ作る)。更新は `gh issue edit <番号> --body-file` で行い、ADR 追記分の「ADR」節更新もまとめて 1 回で反映する
 
 #### 3. Phase 3 (検証) を再実行
 
@@ -213,13 +217,13 @@ PR 本文テンプレート (冒頭に変更履歴、以降は再生成。**`## 
 
 ## 変更履歴
 
-- YYYY-MM-DD: 初回実装 (計画 ${plan_file})
+- YYYY-MM-DD: 初回実装 (計画 issue: ${plan_issue})
 - YYYY-MM-DD: <追加修正の要約>  ← 今回追加
 <...以降の追加修正も順に追記>
 
 ## 計画 / ADR
 
-- 計画: `docs/plans/...`
+- 計画 issue: <plan_issue の URL> (Closes / 部分消化の書き分けは Phase 5 と同じ)
 - ADR: `docs/adr/...` (N 件)
 
 ## 検証結果 (最新)
@@ -249,14 +253,12 @@ PR 本文テンプレート (冒頭に変更履歴、以降は再生成。**`## 
 - [スコープ外] <followup[1].title> — 本 PR では対応しない、cleanup で issue 化予定
 ```
 
-**Test plan は破棄しない (重要)**: 上記テンプレートの `## Test plan` 節は、Phase 5 で構築した内容を **引き継いで最新化する**。本文を `gh pr edit --body-file` で全文置換するため、Test plan 節を省くと初回 PR で構築済みのチェックリスト (`[x]` / `[]`) が消え、レビュアーが検証状況を追えなくなる。再生成時は次のように更新する:
+**Test plan は破棄しない (重要)**: 本文を `gh pr edit --body-file` で全文置換するため、Test plan 節を省くと初回 PR で構築済みのチェックリスト (`[x]` / `[ ]`) が消え、レビュアーが検証状況を追えなくなる。手順 1 で取得済みの現在の PR 本文 (`gh pr view "$PR_URL" --json body -q .body`) から既存の Test plan 節を回収して土台にし、次のように更新する:
 
 - Phase 5 で `[x]` 済みの項目はそのまま維持 (再実行不要)
 - 今回の追加修正で新たに検証が必要になった項目を追加し、Test plan 構築ルール ([Phase 5 の「Test plan 構築ルール」](#test-plan-構築ルール)) に従って実行・分類する
 - 追加修正で既存の `[x]` 項目に回帰リスクがあれば、Phase 3 再実行 (手順 3) の結果で状態を更新する
 - 捏造禁止は Phase 5 と同じく適用 (実行していない項目を `[x]` にしない)
-
-現在の PR 本文は手順 1 で `gh pr view "$PR_URL" --json body -q .body` で取得済みなので、そこから既存の Test plan 節を回収して土台にすると取りこぼしが防げる。
 
 更新コマンド:
 
@@ -273,8 +275,7 @@ heredoc は **クォート付き `<<'EOF'`** を使う (Phase 5 の `gh pr creat
 
 #### 7. title の更新 (必要時のみ)
 
-- スコープが実質的に変わった場合のみ `gh pr edit "$PR_URL" --title "..."`
-- 軽微な追加修正では title を変えない
+- スコープが実質的に変わった場合のみ `gh pr edit "$PR_URL" --title "..."` を実行する (軽微な追加修正では title を変えない)
 
 #### 8. セッションファイル更新
 
@@ -284,8 +285,7 @@ heredoc は **クォート付き `<<'EOF'`** を使う (Phase 5 の `gh pr creat
 
 #### 9. ユーザー報告
 
-- 追加コミットの SHA、更新した PR 本文の要点、残 followup 数を提示
-- 「さらに追加修正する場合は `/dev resume <slug>`」を再掲
+- 追加コミットの SHA、更新した PR 本文の要点、残 followup 数を提示し、「さらに追加修正する場合は `/dev resume <slug>`」を再掲
 
 ### 禁止事項
 
@@ -299,7 +299,7 @@ heredoc は **クォート付き `<<'EOF'`** を使う (Phase 5 の `gh pr creat
 
 **目的**: PR がマージされた後、worktree とブランチをローカルから削除し、セッションファイルを `cleaned` にする。
 
-**起動方法**: 通常の `/dev` フロー (Phase 0→5) からは自動実行しない。PR マージ確認は分〜日単位の非同期タスクなので、ユーザーが明示的に `/dev cleanup` で起動。
+**起動方法**: 通常の `/dev` フロー (Phase 0→5.5) からは自動実行しない。PR マージ確認は分〜日単位の非同期タスクなので、ユーザーが明示的に `/dev cleanup` で起動。
 
 ### 呼び出し形態
 
@@ -388,7 +388,7 @@ cat > "$ISSUE_BODY" <<EOF
 
 **元の決定**: $decision (${decision == "separate-pr" ? "別 PR で対応" : "スコープ外"})
 **発見経緯**: ${source.kind}
-**関連計画**: \`${plan_file}\`
+**関連計画**: ${plan_issue}
 
 ## 詳細
 
@@ -404,11 +404,11 @@ head -c 300 "$ISSUE_BODY"
 # 出力に "## Context" や PR_URL などタイトルから期待される文言が含まれるか確認。
 # 含まれない / 全く別の話題に見える場合は投稿を中止し、ファイル生成からやり直す。
 
+# gh issue create は作成した issue の URL を標準出力に返す (--json フラグは存在しない)
 ISSUE_URL=$(gh issue create \
   --title "$title" \
   --body-file "$ISSUE_BODY" \
-  ${labels:+--label "$labels"} \
-  --json url -q .url)
+  ${labels:+--label "$labels"})
 
 rm -f "$ISSUE_BODY"
 ```
