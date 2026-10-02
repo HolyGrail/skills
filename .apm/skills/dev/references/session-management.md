@@ -114,7 +114,7 @@
   - `wait_started_at`: 最後に実際に push した時刻 (コミット時刻ではない)。push しないラウンドで `last_push_at` を進めても動かさない。待機時間 (`total_wait_seconds`) と、relay モードの時間切れ用タイマーが古いかどうかの基準
   - `processed_review_ids` / `processed_comment_ids`: 対応済み review / comment の id (再 triage 防止)
   - `rebutted_comment_ids`: 反論済み comment の id (Codex が再提起しても新規扱いしない)
-  - `findings[]`: 指摘の台帳。`severity` (P1/P2/P3)、`validity` (`valid` / `excessive` / `wrong`)、`disposition` (`fixed` / `rebutted` / `followup` / `reply-only` / `accepted-risk` / `pending`)、`evidence` (成立確認と検証の要約)、`repair` (修復記録。P1 と並行制御・状態遷移・永続化の P2)、`sha` / `issue_url`。CONVERGED 判定とエスカレーションの一覧表、および事後の集計に使う
+  - `findings[]`: 指摘の台帳。`severity` (triage 後の重大度 P1/P2/P3。振る舞いに影響しない P2 を reply-only にしたら P3 にし、元のバッジは `evidence` に書く)、`validity` (`valid` / `excessive` / `wrong`)、`disposition` (`fixed` / `rebutted` / `followup` / `reply-only` / `accepted-risk` / `pending`)、`evidence` (成立確認と検証の要約)、`repair` (修復記録。P1 と並行制御・状態遷移・永続化の P2)、`sha` / `issue_url`。CONVERGED 判定とエスカレーションの一覧表、および事後の集計に使う
   - `total_wait_seconds` / `escalate_after_seconds`: 累積待機秒とエスカレーション閾値 (既定 2400 = 40 分)
   - `started_at` / `approved_at`: 監視開始時刻 / approved 検知時刻
   - `terminal_reason` / `timeout_reason`: 終端の種別 (`approved` / `converged` / `review-incomplete` / `ci-only` / `escalated`) と、review-incomplete の内訳 (`usage-limit` / `error` / `no-head-review`)

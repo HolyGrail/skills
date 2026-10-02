@@ -24,7 +24,7 @@
 #     --watch            内部で短間隔ポーリング (変化検知 or タイムアウトで exit)。
 #                        ※ run_in_background な Bash で起動すること (前景 sleep は環境で禁止)。
 #     --interval <sec>   ポーリング間隔 (default 30)
-#     --max-wait <sec>   --watch の最大待機秒 (default 540。Bash の 600s 上限内に収める)
+#     --max-wait <sec>   --watch の最大待機秒 (default 540。前景 Bash の 600s 上限内にも収まる値)
 #     --bot <login>      Codex bot のログイン名 (default chatgpt-codex-connector[bot])
 #
 # 出力 (stdout, 1 行 JSON):
@@ -32,14 +32,17 @@
 #     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
 #     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
+#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」以降 (同じ秒を含む) の
+#                                            # 利用上限コメントの時刻 (上限がまだ戻っていない)。push で baseline が
+#                                            # 利用上限コメントを越えても、待機上限での分類に使える
 #     "latest_review": {id, commit_id, submitted_at, ...} | null,  # 同以降の最新 codex review
 #     "new_comments": [ {id, pull_request_review_id, in_reply_to_id, path, line,
 #                        outdated, commit_id, html_url, created_at, body}, ... ],
 #     "eyes_present": true|false,            # codex の 👀 が今ついているか (補助情報)
 #     "checked_at": "<ISO>"
 #   }
-# signal 優先順位: approved > new_review > usage_limited > waiting。ただし approved は、baseline 以降の最新 review 以降に
-# 付いたときだけ (approved の後に review が届いていれば new_review)。
+# signal 優先順位: approved > new_review > usage_limited > waiting。ただし approved は、baseline 以降の最新 review より後に
+# 付いたときだけ (approved の後か同じ秒に review が届いていれば new_review)。
 # 終了コード: 0 = 正常 (signal は JSON 参照)、2 = 引数エラー、3 = gh/jq 実行エラー。
 
 set -euo pipefail
@@ -50,7 +53,7 @@ MAX_WAIT=540
 WATCH=0
 
 usage() {
-  sed -n '2,44p' "$0" >&2
+  sed -n '2,46p' "$0" >&2
   exit 2
 }
 
@@ -74,15 +77,20 @@ done
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # gh api の失敗を空の結果と見なさず、終了コード 3 で止める (空と見なすと利用上限や approved を取りこぼして waiting になる)。
-# watch ループの result=$(check) の中では errexit が効かないので、呼び出し側は「|| exit 3」で明示的に伝える
+# watch ループの result=$(check) の中では errexit が効かないので、呼び出し側は「|| exit 3」で明示的に伝える。
+# --paginate はページごとに別の JSON 配列を出すので、1 つの配列にまとめてから返す (まとめないと後段の jq が
+# ページごとに走り、時刻や eyes が複数行になって出力の JSON が組み立てられない)
 api() {
-  gh api "$1" --paginate 2>/dev/null || { printf '{"error":"gh api failed: %s"}\n' "$1" >&2; exit 3; }
+  local out
+  out=$(gh api "$1" --paginate 2>/dev/null) || { printf '{"error":"gh api failed: %s"}\n' "$1" >&2; exit 3; }
+  printf '%s' "$out" | jq -cs 'add // []'
 }
 
 # 1 ショット判定。stdout に 1 行 JSON を出す。
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review latest_review_at review_ids has_review new_comments signal
+  local last_activity_at usage_limit_active_at
 
   reactions=$(api "repos/$REPO/issues/$PR/reactions") || exit 3
   reviews=$(api "repos/$REPO/pulls/$PR/reviews") || exit 3
@@ -105,6 +113,21 @@ check() {
   # last_push 以降の利用上限コメント
   usage_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg base "$BASE" \
     '[.[] | select(.user.login==$bot and .created_at > $base
+                   and (.body | test("reached your Codex usage limits"; "i")))]
+     | map(.created_at) | max // ""')
+
+  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) 以降に
+  # 利用上限コメントがあれば、上限はまだ戻っていない。GitHub の時刻は秒単位で、上限を使い切ったレビューと
+  # 上限コメントは同じ秒になりうるので、同じ秒は上限が残っている側に倒す (外れても待機上限での分類が変わるだけ)
+  last_activity_at=$( { printf '%s' "$reviews" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and .submitted_at != null) | .submitted_at] | max // ""'
+                        printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and .content=="+1") | .created_at] | max // ""'
+                        printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and (.body | test("Didn'"'"'t find any major issues"; "i")))
+                           | .created_at] | max // ""'; } | sort | tail -n 1)
+  usage_limit_active_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg after "$last_activity_at" \
+    '[.[] | select(.user.login==$bot and .created_at >= $after
                    and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
 
@@ -135,9 +158,10 @@ check() {
                outdated: (.line==null), commit_id, html_url, created_at, body}]')
   fi
 
-  # approved は、その時刻が baseline 以降の最新 review 以降のときだけ。approved の後に届いた review
-  # (同じ commit の再レビューで指摘が出た場合など) があれば new_review を返す。時刻は辞書順 = 時刻順
-  if [ -n "$approved_at" ] && { [ -z "$latest_review_at" ] || [[ ! "$approved_at" < "$latest_review_at" ]]; }; then
+  # approved は、その時刻が baseline 以降の最新 review より後のときだけ。approved の後に届いた review
+  # (同じ commit の再レビューで指摘が出た場合など) があれば new_review を返す。GitHub の時刻は秒単位なので、
+  # 同じ秒なら review を優先する (approved を勝たせると指摘を triage せずに終端へ進む)。時刻は辞書順 = 時刻順
+  if [ -n "$approved_at" ] && { [ -z "$latest_review_at" ] || [[ "$latest_review_at" < "$approved_at" ]]; }; then
     signal="approved"
   elif [ "$has_review" = "true" ]; then signal="new_review"
   elif [ -n "$usage_limit_at" ];   then signal="usage_limited"
@@ -147,6 +171,7 @@ check() {
     --arg signal "$signal" \
     --arg approved_at "$approved_at" \
     --arg usage_limit_at "$usage_limit_at" \
+    --arg usage_limit_active_at "$usage_limit_active_at" \
     --argjson latest_review "${latest_review:-null}" \
     --argjson new_comments "$new_comments" \
     --argjson eyes "${eyes:-false}" \
@@ -154,6 +179,7 @@ check() {
     '{signal: $signal,
       approved_at: (if $approved_at=="" then null else $approved_at end),
       usage_limit_at: (if $usage_limit_at=="" then null else $usage_limit_at end),
+      usage_limit_active_at: (if $usage_limit_active_at=="" then null else $usage_limit_active_at end),
       latest_review: $latest_review,
       new_comments: $new_comments,
       eyes_present: $eyes,
