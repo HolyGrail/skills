@@ -25,6 +25,9 @@
 #   options:
 #     --processed-reviews <id,...>  処理済みの codex review の id (カンマ区切り。空でもよい)。
 #                        セッションの review.processed_review_ids を渡す。これに無い review が未処理。
+#     --limit-head <sha> 利用上限を観測した時点の PR の head。セッションの review.usage_limit_head を渡す (無ければ省く)。
+#                        上限コメントより後に届いた review のうち、この commit の祖先 (上限の前の head) を対象とするものを
+#                        「上限が戻った」証拠に数えない (上限の前に依頼されて遅れて届いた review を除く)
 #     --watch            内部で短間隔ポーリング (変化検知 or タイムアウトで exit)。
 #                        ※ run_in_background な Bash で起動すること (前景 sleep は環境で禁止)。
 #     --interval <sec>   ポーリング間隔 (default 30)
@@ -38,7 +41,8 @@
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
 #     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」以降 (同じ秒を含む) の
 #                                            # 利用上限コメントの時刻 (上限がまだ戻っていない)。push で baseline が
-#                                            # 利用上限コメントを越えても、待機上限での分類に使える
+#                                            # 利用上限コメントを越えても、待機上限での分類に使える。上限の後の review は
+#                                            # --limit-head の祖先を対象とするものを数えない
 #     "head_sha": "<sha>",                   # PR の現在の head
 #     "head_review": {id, commit_id, submitted_at} | null,  # head を対象とする最新の codex review (処理済みを含む)。
 #                                            # null でなければ head はレビュー済み
@@ -58,6 +62,7 @@ set -euo pipefail
 
 BOT="chatgpt-codex-connector[bot]"
 PROCESSED=""
+LIMIT_HEAD=""
 INTERVAL=30
 MAX_WAIT=540
 WATCH=0
@@ -79,6 +84,7 @@ while [ $# -gt 0 ]; do
     --max-wait) MAX_WAIT="${2:?}"; shift ;;
     --bot)      BOT="${2:?}"; shift ;;
     --processed-reviews) PROCESSED="${2?}"; shift ;;
+    --limit-head) LIMIT_HEAD="${2?}"; shift ;;
     -h|--help)  usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
@@ -106,6 +112,7 @@ check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review review_ids has_review new_comments signal
   local last_activity_at usage_limit_active_at pr head_sha head_review
+  local latest_limit_at activity_reviews late_commits post_limit_commits c status
 
   pr=$(api "repos/$REPO/pulls/$PR") || exit 3
   head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
@@ -142,9 +149,37 @@ check() {
   # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) 以降に
   # 利用上限コメントがあれば、上限はまだ戻っていない。GitHub の時刻は秒単位で、上限を使い切ったレビューと
   # 上限コメントは同じ秒になりうるので、同じ秒は上限が残っている側に倒す (外れても待機上限での分類が変わるだけ)。
-  # 上限の前に依頼されて遅れて届いた前の head への review も「戻った」と数えるので、その場合の分類は
-  # usage-limit ではなく no-head-review になる (どちらも REVIEW_INCOMPLETE で、approved の判定には影響しない)
-  last_activity_at=$( { printf '%s' "$reviews" | jq -r 'map(.submitted_at) | max // ""'
+  # 上限の前に依頼されて遅れて届いた前の head への review を「戻った」と数えないよう、--limit-head があれば、
+  # 最新の上限コメントより後の review のうち、limit-head の祖先 (compare の behind) を対象とするものを数えない。
+  # limit-head 自身 (identical)、その後の push (ahead)、rebase 後 (diverged) への review は上限が戻った証拠になる。
+  # 上限コメント以前の review は判定に影響しないので、compare はそれより後の review の commit だけに掛ける
+  activity_reviews="$reviews"
+  if [ -n "$LIMIT_HEAD" ]; then
+    latest_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+      '[.[] | select(.user.login==$bot and (.body | test("reached your Codex usage limits"; "i")))
+       | .created_at] | max // ""')
+    if [ -n "$latest_limit_at" ]; then
+      late_commits=$(printf '%s' "$reviews" | jq -r --arg l "$latest_limit_at" \
+        '[.[] | select(.submitted_at > $l) | .commit_id] | unique | .[]')
+      post_limit_commits='[]'
+      for c in $late_commits; do
+        # 404 / 422 (force push で消えた commit や、共通の祖先が無い) は数えない。それ以外の失敗は、
+        # 空と見なすと上限が残っていると誤って usage_limited を返しうるので、api() と同じく終了コード 3 で止める
+        if ! status=$(gh api "repos/$REPO/compare/$LIMIT_HEAD...$c" --jq '.status' 2>&1); then
+          case "$status" in
+            *"HTTP 404"*|*"HTTP 422"*) status="" ;;
+            *) printf '{"error":"gh api failed: repos/%s/compare/%s...%s"}\n' "$REPO" "$LIMIT_HEAD" "$c" >&2; exit 3 ;;
+          esac
+        fi
+        case "$status" in
+          ahead|identical|diverged) post_limit_commits=$(printf '%s' "$post_limit_commits" | jq -c --arg c "$c" '. + [$c]') ;;
+        esac
+      done
+      activity_reviews=$(printf '%s' "$reviews" | jq -c --arg l "$latest_limit_at" --argjson ok "$post_limit_commits" \
+        '[.[] | select(.submitted_at <= $l or (.commit_id as $c | $ok | index($c)) != null)]')
+    fi
+  fi
+  last_activity_at=$( { printf '%s' "$activity_reviews" | jq -r 'map(.submitted_at) | max // ""'
                         printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
                           '[.[] | select(.user.login==$bot and .content=="+1") | .created_at] | max // ""'
                         printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \

@@ -110,7 +110,7 @@ pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 
 
 | 届いたもの | 入る状態と最初の作業 |
 |---|---|
-| 「Codex が PR #N … にレビューを付けました」 | `poll-codex-review.sh` を **`--watch` なしで 1 回** 呼ぶ (引数は poll モードと同じで `$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`)。`signal=new_review` の `new_comments[]` で [RESPONDING](#1-ラウンドの対応フロー) に入る。pr-relay のプロンプトは件数しか運ばないので、triage に要るコメント本文と id はここで取る |
+| 「Codex が PR #N … にレビューを付けました」 | `poll-codex-review.sh` を **`--watch` なしで 1 回** 呼ぶ (引数は poll モードと同じで `$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`、記録があれば `--limit-head` = `review.usage_limit.head`)。`signal=new_review` の `new_comments[]` で [RESPONDING](#1-ラウンドの対応フロー) に入る。pr-relay のプロンプトは件数しか運ばないので、triage に要るコメント本文と id はここで取る |
 | 「Codex が PR #N … を approved にしました」 | 下の「状態の確定」を行う |
 | CI の結果 (`ci-monitor-event`、または `gh pr checks --watch` の完了) | fail / cancel なら [CI_FIXING](#ci-fail-の修正フロー-ci_fixing) に入る (その手順 0 で届いていたレビューを拾う)。緑なら下の「状態の確定」を行う |
 | 時間切れ用タイマーの完了 | 出力の `armed_at` が `review.wait_started_at` より前 (後の push より前に張ったタイマー) か、ループがすでに終端なら、何もせずターンを終える。それ以外は下の「状態の確定」を行う |
@@ -243,7 +243,7 @@ pr-relay は CI を見ない (Desktop アプリが CI の結果をセッショ�
 
 ### CI FAIL の修正フロー (CI_FIXING)
 
-0. **入口でレビューの有無を確かめる**: `poll-codex-review.sh` を `--watch` なしで 1 回呼ぶ (`$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`)。CI を待つ間に届いたレビューは、確かめずに CI 修正を push しても次のポーリングで返るが、その指摘の fix が別の push になり、Codex のパスを 1 回余分に使う。`new_review` なら [1 ラウンドの対応フロー](#1-ラウンドの対応フロー) で triage と fix を進め、CI 修正と同じ 1 push にまとめる (下の手順 4。この push は指摘対応を含むので `push_rounds` に数える)。それ以外の signal は「状態の確定」の手順 1 と同じく保存し、そのまま CI 修正に進む。relay モードでも poll モードでも同じ
+0. **入口でレビューの有無を確かめる**: `poll-codex-review.sh` を `--watch` なしで 1 回呼ぶ (`$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`、記録があれば `--limit-head` = `review.usage_limit.head`)。CI を待つ間に届いたレビューは、確かめずに CI 修正を push しても次のポーリングで返るが、その指摘の fix が別の push になり、Codex のパスを 1 回余分に使う。`new_review` なら [1 ラウンドの対応フロー](#1-ラウンドの対応フロー) で triage と fix を進め、CI 修正と同じ 1 push にまとめる (下の手順 4。この push は指摘対応を含むので `push_rounds` に数える)。それ以外の signal は「状態の確定」の手順 1 と同じく保存し、そのまま CI 修正に進む。relay モードでも poll モードでも同じ
 1. 失敗した check の詳細を取得する: `gh pr checks --json` の `link` から run ID を特定し、`gh run view <run-id> --log-failed` でログを読む
 2. **根本原因を診断してから修正する**。ローカルの Phase 3 検証で再現を試み、再現すればローカルで修正 → PASS を確認してから push する。ローカルで再現しない失敗 (環境差・依存キャッシュ・secrets) はログから原因を特定する。修正の実装は [model-routing.md の判定手順](model-routing.md#判定手順)で実行主体を自律選定し subagent / codex へ委任してよい (診断・PASS 判定・push はメインに残す)
 3. **flaky の扱い**: 失敗が今回の変更と無関係で非決定的に見える場合のみ、`gh run rerun <run-id> --failed` を **1 回だけ**試す。再実行でも落ちたら実問題として扱い、修正する。rerun を繰り返して緑を引き当てるのは禁止
@@ -270,14 +270,18 @@ SCRIPT="$SKILL_DIR/references/scripts/poll-codex-review.sh"
 # 処理済み review の id。セッションの配列をカンマ区切りにする (空なら空文字列)
 SESSION_FILE="$HOME/.claude/dev-sessions/<slug>.json"
 PROCESSED=$(jq -r '.review.processed_review_ids | join(",")' "$SESSION_FILE")
+# 利用上限を観測した時点の head (記録が無ければ渡さない)
+LIMIT_HEAD=$(jq -r '.review.usage_limit.head // ""' "$SESSION_FILE")
+LIMIT_ARGS=(); [ -n "$LIMIT_HEAD" ] && LIMIT_ARGS=(--limit-head "$LIMIT_HEAD")
 
 # --watch: background で起動する (前景 sleep が禁止の環境のため run_in_background 必須)
-"$SCRIPT" "$OWNER/$REPO" "$PR_NUMBER" "$LAST_PUSH_AT" --processed-reviews "$PROCESSED" --watch --max-wait 540
+"$SCRIPT" "$OWNER/$REPO" "$PR_NUMBER" "$LAST_PUSH_AT" --processed-reviews "$PROCESSED" "${LIMIT_ARGS[@]}" --watch --max-wait 540
 ```
 
 - **必ず `run_in_background: true` の Bash で起動する**。スクリプトの `while` ループごと background プロセスになり、exit 時に Claude が起こされる。
 - 第 3 引数 `$LAST_PUSH_AT` は `review.last_push_at` (ISO8601 UTC)。**👍、「Didn't find any major issues」、利用上限コメントは、これより厳密に新しいものだけがシグナル**になる。
 - `--processed-reviews` は `review.processed_review_ids`。review は時刻で絞らず、ここに無いものを未処理として返す。渡し忘れると、処理済みの review が `new_review` で返り続ける (コメントは `processed_comment_ids` で弾かれるが、ループが進まない)。どの呼び出しでも必ず渡す
+- `--limit-head` は `review.usage_limit.head` (記録が無ければ渡さない)。どの呼び出しでも `--processed-reviews` と同じく渡す。下の `usage_limit_active_at` の判定から、上限の前に依頼されて遅れて届いた review を除くために使う
 - 出力 (1 行 JSON):
   ```json
   {"signal":"approved|new_review|usage_limited|waiting","approved_at":"<ISO|null>",
@@ -293,7 +297,8 @@ PROCESSED=$(jq -r '.review.processed_review_ids | join(",")' "$SESSION_FILE")
 - `gh api` が失敗すると、結果を空とは見なさず終了コード 3 で終わる (空と見なすと、利用上限や approved を取りこぼして `waiting` になる)。終了コード 3 は `waiting` として扱わず、時間をおいて 1 回だけ再実行し、それでも失敗したら認証やレート制限を確かめて報告する
 - `approved_at` は 👍 reaction と「Didn't find any major issues」コメントのうち新しい方。`latest_review` は未処理の最新 review。
 - `head_sha` はスクリプトが `pulls/{n}` から取った PR の head。`head_review` は head を対象とする最新の review で、処理済みも含む。**`head_review` が null でなければ head はレビュー済み**。前の head への遅れた review を後から処理しても、この判定は変わらない
-- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (review / 👍 /「Didn't find」) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。上限の前に依頼されて遅れて届いた前の head への review も「戻った」と数えるので、その場合の分類は `usage-limit` ではなく `no-head-review` になる (どちらも REVIEW_INCOMPLETE で、approved の判定には影響しない)
+- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (review / 👍 /「Didn't find」) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。`--limit-head` を渡すと、上限コメントより後に届いた review のうち、その commit の祖先 (上限の前の head) を対象とするものは「戻った」と数えない (上限の前に依頼されて遅れて届いた review で、上限が戻ったと誤って判定しない)。limit-head 自身、その後の push、rebase 後の commit への review は数える
+- **ポーリングの結果を受けるたびに、`signal` によらず `review.usage_limit` を更新する**: 最新の利用上限コメントの時刻 (`usage_limit_at`、それが null なら `usage_limit_active_at`) が null でなく、`review.usage_limit.at` と違うなら、`review.usage_limit = {at: その時刻, head: head_sha}` を保存する。上限コメントの後の最初のポーリングで記録するので、`head_sha` は上限が付いた時点の head になる (push の直前にもポーリングするため)。遅れて届いた review は未処理として `new_review` で返るので、それを処理した後のポーリングには必ず `--limit-head` が付く
 - `signal=usage_limited` は、baseline 以降の利用上限コメントがまだ有効 (`usage_limit_active_at` が baseline より新しい) なときだけ返る。push しないラウンドでは baseline が動かないので、上限の後に届いた review を処理した後も上限コメントは baseline より新しいまま残るが、上限が戻っていれば終端にはしない
 
 
@@ -302,7 +307,7 @@ PROCESSED=$(jq -r '.review.processed_review_ids | join(",")' "$SESSION_FILE")
 background `--watch` の sleep が環境で動かない / 長時間にわたり再起動を繰り返す場合は、**1 ショットモード** (`--watch` なし) を ScheduleWakeup で間欠実行してもよい。間隔は **240–270s 推奨** (Anthropic prompt cache の 5 分 TTL 内に収めてコンテキストを温存)。
 
 ```bash
-"$SCRIPT" "$OWNER/$REPO" "$PR_NUMBER" "$LAST_PUSH_AT" --processed-reviews "$PROCESSED"   # 1 ショット (即 exit)
+"$SCRIPT" "$OWNER/$REPO" "$PR_NUMBER" "$LAST_PUSH_AT" --processed-reviews "$PROCESSED" "${LIMIT_ARGS[@]}"   # 1 ショット (即 exit)
 ```
 
 ---
@@ -382,7 +387,7 @@ SCRIPT="$SKILL_DIR/references/scripts/local-codex-review.sh"
 
 ### 7. commit → push → 返信 → PR 本文
 
-push の直前に `poll-codex-review.sh` を `--watch` なしで 1 回呼ぶ (`--processed-reviews` は `review.processed_review_ids`)。fix と検証とローカルレビューの間に届いたレビューを、同じ push に含めるためである。ここで拾えなかったレビュー (このポーリングから push までに届いたもの) も失われない。review は時刻ではなく処理済みの id で絞るので、push の後のポーリングで未処理として返る。`processed_review_ids` は手順 8 まで更新しないので、このポーリングはこのラウンドで triage 中のレビューも返す。`new_comments[]` のうち、`pull_request_review_id` がこのラウンドで triage したレビューの id に無いものだけを新着とし、新着があれば手順 2〜5 で triage してから同じ push に含める。push の直前に確かめるのはこの 1 回だけにする (ここで届いた指摘の fix にはローカルレビューを掛けない。1 ラウンド 1 push を崩さないため)。
+push の直前に `poll-codex-review.sh` を `--watch` なしで 1 回呼ぶ (`--processed-reviews` は `review.processed_review_ids`、記録があれば `--limit-head` は `review.usage_limit.head`)。fix と検証とローカルレビューの間に届いたレビューを、同じ push に含めるためである。ここで拾えなかったレビュー (このポーリングから push までに届いたもの) も失われない。review は時刻ではなく処理済みの id で絞るので、push の後のポーリングで未処理として返る。`processed_review_ids` は手順 8 まで更新しないので、このポーリングはこのラウンドで triage 中のレビューも返す。`new_comments[]` のうち、`pull_request_review_id` がこのラウンドで triage したレビューの id に無いものだけを新着とし、新着があれば手順 2〜5 で triage してから同じ push に含める。push の直前に確かめるのはこの 1 回だけにする (ここで届いた指摘の fix にはローカルレビューを掛けない。1 ラウンド 1 push を崩さないため)。
 
 ```bash
 cd "$WT_PATH" && git add -A && git commit -m "fix: Codex レビュー指摘に対応 (round N)" && git push
@@ -567,6 +572,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "last_push_commit": "abc1234...",
   "wait_started_at": "2026-05-30T01:00:00Z", // 最後に実際に push した時刻 (コミット時刻ではない)。待機時間と relay モードのタイマーの基準
   "processed_review_ids": [],           // triage した review の id。--processed-reviews に渡し、ポーリングの対象から除く
+  "usage_limit": null,                  // {at, head}: 観測した最新の利用上限コメントの時刻と、そのときの PR の head。head を --limit-head に渡す
   "processed_comment_ids": [],
   "rebutted_comment_ids": [],
   "findings": [
