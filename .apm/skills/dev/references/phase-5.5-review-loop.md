@@ -175,7 +175,7 @@ push するたびに CI と Codex の判定は仕切り直しになる (CI は H
   ├─ signal=new_review (processed_review_ids に無い codex review。approved より優先) → [RESPONDING]
   ├─ signal=approved (last_push_at 以降に codex +1 か「Didn't find any major issues」)
   │     └─ CI が最新 push に対して緑であることを再確認 → [APPROVED] 終了
-  ├─ signal=usage_limited (last_push_at 以降に利用上限コメント)
+  ├─ signal=usage_limited (last_push_at 以降の利用上限コメントが、まだ有効)
   │     └─ → [REVIEW_INCOMPLETE] (種別 usage-limit)
   └─ signal=waiting (内部タイムアウトで exit)
         ├─ total_wait_seconds += 経過。escalate_after_seconds 超過:
@@ -292,7 +292,8 @@ PROCESSED=$(jq -r '.review.processed_review_ids | join(",")' "$SESSION_FILE")
 - `gh api` が失敗すると、結果を空とは見なさず終了コード 3 で終わる (空と見なすと、利用上限や approved を取りこぼして `waiting` になる)。終了コード 3 は `waiting` として扱わず、時間をおいて 1 回だけ再実行し、それでも失敗したら認証やレート制限を確かめて報告する
 - `approved_at` は 👍 reaction と「Didn't find any major issues」コメントのうち新しい方。`latest_review` は未処理の最新 review。
 - `head_sha` はスクリプトが `pulls/{n}` から取った PR の head。`head_review` は head を対象とする最新の review で、処理済みも含む。**`head_review` が null でなければ head はレビュー済み**。前の head への遅れた review を後から処理しても、この判定は変わらない
-- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (👍 /「Didn't find」/ 上限コメント時点の head かそれより新しい commit への review) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。上限コメントより前の commit への review は、上限の前に依頼されて遅れて届いたものなので、上限が戻った証拠に数えない。上限コメントの時点の head は、PR の commits のうちその時刻までにコミットされた最新のもの (上限コメントがあるときだけ `pulls/{n}/commits` を取る)
+- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (review / 👍 /「Didn't find」) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。上限の前に依頼されて遅れて届いた前の head への review も「戻った」と数えるので、その場合の分類は `usage-limit` ではなく `no-head-review` になる (どちらも REVIEW_INCOMPLETE で、approved の判定には影響しない)
+- `signal=usage_limited` は、baseline 以降の利用上限コメントがまだ有効 (`usage_limit_active_at` が baseline より新しい) なときだけ返る。push しないラウンドでは baseline が動かないので、上限の後に届いた review を処理した後も上限コメントは baseline より新しいまま残るが、上限が戻っていれば終端にはしない
 
 
 ### ScheduleWakeup フォールバック
@@ -478,7 +479,7 @@ rm -f "$REPLY"
 `signal=approved` (last_push_at 以降の 👍 か「Didn't find any major issues」) を検知したら、次を確認して終了する:
 
 1. **最新 push に対する CI が全成功** (`gh pr checks --json` で bucket が全て `pass`/`skipping`。pending が残っていれば CI_WAIT に戻って完了を待つ)
-2. `findings[]` に disposition の無い P1/P2 が残っていない (残っていれば処理してから終了)
+2. `findings[]` の P1/P2 が [CONVERGED](#converged-push-を伴わないラウンドの終端) の条件 2 を満たす (disposition の無いものは処理し、ユーザー確認の無い rebut は ESCALATED で確認してから終了する。push しないラウンドでは baseline が動かないので、rebut の前に付いた 👍 がその後も approved として返る)
 3. `review.loop_status = "approved"`、`review.approved_at = <時刻>`、`terminal_reason = "approved"` を保存
 4. ユーザーに報告: 受信したレビュー数と push した回数、各ラウンドの対応サマリ (fix/rebut/followup/reply-only の内訳、CI 修正内容)、ローカルレビューのパス数と結果、CI 最終結果、最終コミット sha
    - 報告する各項目は、このセッションのツール結果 (`gh pr checks` の出力、`git log`、返信 API の応答) を指せるものだけにする。未検証の項目は「未検証」と明示する (SKILL.md「全フェーズ共通」6)
@@ -502,7 +503,7 @@ Codex の 👍 は無いが、次を全て満たせば終了する:
 
 | 種別 (`timeout_reason`) | 条件 |
 |---|---|
-| `usage-limit` | `signal=usage_limited` (last_push_at 以降に利用上限コメント)、または待機上限に達したときにポーリングの `usage_limit_active_at` が null でない (レビュー対応の push で baseline が上限コメントを越えた場合) |
+| `usage-limit` | `signal=usage_limited` (last_push_at 以降の利用上限コメントが、まだ有効)、または待機上限に達したときにポーリングの `usage_limit_active_at` が null でない (レビュー対応の push で baseline が上限コメントを越えた場合) |
 | `error` | bot のエラーコメント、または「no environment」のようなレビュー不能の通知。`poll-codex-review.sh` はこれを判別しない (`waiting` が返る) ので、待機上限に達したとき、または `/dev review` で再開したときに、bot の最新の issue comment を読んで判定する |
 | `no-head-review` | 過去に Codex イベントがあり、待機上限に達しても head に対するレビューが来ない |
 
