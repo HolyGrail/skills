@@ -32,7 +32,7 @@
 #     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
 #     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
-#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」より後の
+#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」以降 (同じ秒を含む) の
 #                                            # 利用上限コメントの時刻 (上限がまだ戻っていない)。push で baseline が
 #                                            # 利用上限コメントを越えても、待機上限での分類に使える
 #     "latest_review": {id, commit_id, submitted_at, ...} | null,  # 同以降の最新 codex review
@@ -116,8 +116,9 @@ check() {
                    and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
 
-  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) より後に
-  # 利用上限コメントがあれば、上限はまだ戻っていない
+  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) 以降に
+  # 利用上限コメントがあれば、上限はまだ戻っていない。GitHub の時刻は秒単位で、上限を使い切ったレビューと
+  # 上限コメントは同じ秒になりうるので、同じ秒は上限が残っている側に倒す (外れても待機上限での分類が変わるだけ)
   last_activity_at=$( { printf '%s' "$reviews" | jq -r --arg bot "$BOT" \
                           '[.[] | select(.user.login==$bot and .submitted_at != null) | .submitted_at] | max // ""'
                         printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
@@ -126,7 +127,7 @@ check() {
                           '[.[] | select(.user.login==$bot and (.body | test("Didn'"'"'t find any major issues"; "i")))
                            | .created_at] | max // ""'; } | sort | tail -n 1)
   usage_limit_active_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg after "$last_activity_at" \
-    '[.[] | select(.user.login==$bot and .created_at > $after
+    '[.[] | select(.user.login==$bot and .created_at >= $after
                    and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
 
