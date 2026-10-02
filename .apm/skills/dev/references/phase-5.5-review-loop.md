@@ -298,7 +298,7 @@ LIMIT_ARGS=(); [ -n "$LIMIT_HEAD" ] && LIMIT_ARGS=(--limit-head "$LIMIT_HEAD")
 - `approved_at` は 👍 reaction と「Didn't find any major issues」コメントのうち新しい方。`latest_review` は未処理の最新 review。
 - `head_sha` はスクリプトが `pulls/{n}` から取った PR の head。`head_review` は head を対象とする最新の review で、処理済みも含む。**`head_review` が null でなければ head はレビュー済み**。前の head への遅れた review を後から処理しても、この判定は変わらない
 - `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (review / 👍 /「Didn't find」) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。`--limit-head` を渡すと、上限コメントより後に届いた review は、limit-head の後に push された commit (limit-head の子孫か、今の head から辿れる rebase 後の commit) を対象とするものだけを「戻った」と数える。limit-head 自身とその祖先、上限の前に rebase で捨てられた commit への review は、上限の前に依頼されて遅れて届いたものでありうるので数えない (同じ commit への `@codex review` が上限に当たり、元のレビューが後から届く場合を含む)
-- **ポーリングの結果を受けるたびに、`signal` によらず `review.usage_limit` を更新する**: `usage_limit_latest_at` (baseline にも上限が戻ったかにもよらない、最新の利用上限コメントの時刻) が null でなく、`review.usage_limit.at` と違うなら、`review.usage_limit = {at: usage_limit_latest_at, head: <上限が付いた時点の head>}` を保存する。上限が付いた時点の head は、上限コメントが `review.wait_started_at` (最後の push) より前なら `review.prev_push_commit` (push の直前のポーリングから push までの間に付いた上限)、それ以外は `head_sha`。push の直前にもポーリングするので、上限コメントを観測しないまま越える push はその 1 回だけである。遅れて届いた review は未処理として `new_review` で返るので、それを処理した後のポーリングには必ず `--limit-head` が付く
+- **ポーリングの結果を受けるたびに、`signal` によらず `review.usage_limit` を更新する**: `usage_limit_latest_at` (baseline にも上限が戻ったかにもよらない、最新の利用上限コメントの時刻) が null でなく、`review.usage_limit.at` と違うなら、`review.usage_limit = {at: usage_limit_latest_at, head: <上限が付いた時点の head>}` を保存する。上限が付いた時点の head は、上限コメントが `review.last_push_at` (最後の push のコミット時刻) より前なら `review.prev_push_commit` (push の直前のポーリングから push までの間に付いた上限)、それ以外は `head_sha`。境界には push を始める前に決まるコミット時刻を使う (push の完了後に取る `wait_started_at` だと、push の途中で新しい head に付いた上限を前の head に割り当て、新しい head への遅れた review を上限が戻った証拠に数えてしまう)。コミットから push までの間に前の head に付いた上限は新しい head に割り当たるが、前の head への review は祖先なので数えず、新しい head への review は limit-head 自身なので数えない (上限が残る側に倒れる)。push の直前にもポーリングするので、上限コメントを観測しないまま越える push はその 1 回だけである。遅れて届いた review は未処理として `new_review` で返るので、それを処理した後のポーリングには必ず `--limit-head` が付く
 - `signal=usage_limited` は、baseline 以降の利用上限コメントがまだ有効 (`usage_limit_active_at` が baseline より新しい) で、head が未レビュー (`head_review` が null) なときだけ返る。push しないラウンドでは baseline が動かないので、上限の後に届いた review を処理した後も上限コメントは baseline より新しいまま残るが、上限が戻っていれば終端にはしない
 
 
@@ -570,7 +570,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "codex_review_requested": false,      // この PR で @codex review を投げたか (1 PR 1 回)
   "last_push_at": "2026-05-30T01:00:00Z",
   "last_push_commit": "abc1234...",
-  "prev_push_commit": null,             // 1 つ前の push の sha。上限が push の直前に付いたときの usage_limit.head に使う
+  "prev_push_commit": null,             // 1 つ前の push の sha。上限コメントが last_push_at より前のときの usage_limit.head に使う
   "wait_started_at": "2026-05-30T01:00:00Z", // 最後に実際に push した時刻 (コミット時刻ではない)。待機時間と relay モードのタイマーの基準
   "processed_review_ids": [],           // triage した review の id。--processed-reviews に渡し、ポーリングの対象から除く
   "usage_limit": null,                  // {at, head}: 最新の利用上限コメントの時刻と、上限が付いた時点の PR の head。head を --limit-head に渡す
