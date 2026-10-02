@@ -12,3 +12,6 @@ apm_modules/
 .github/prompts/
 AGENTS.md
 CLAUDE.md
+
+# Track the repository contributor guide
+!/AGENTS.md
