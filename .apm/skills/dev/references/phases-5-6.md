@@ -54,9 +54,11 @@ Codex のクラウドレビューは 1 パスに 1〜2 件ずつしか指摘を�
 掛ける条件: 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超える。どちらにも当たらなければ掛けずに PR を開き、`review.head_local_review = "cloud-first"` と記録する。
 
 ```bash
-# SKILL_DIR: このスキルを読み込んだときに示される base directory。プロジェクトローカルの APM インストールなら
+# SKILL_DIR には、このスキルを読み込んだときに示される base directory の絶対パスを毎回代入する (環境変数として
+# 定義済みではなく、Bash 呼び出し間で引き継がれない)。プロジェクトローカルの APM インストールなら
 # <repo>/.claude/skills/dev、グローバルなら ~/.claude/skills/dev。~/.claude/skills/dev に固定すると、
 # プロジェクトローカルだけに入れた環境ではスクリプトが無く終了コード 127 で失敗する
+SKILL_DIR="<スキルの base directory>"
 SCRIPT="$SKILL_DIR/references/scripts/local-codex-review.sh"
 # 1 パス 4〜6 分 (関連テストの実行や実 DB での再現を含む)。run_in_background で起動し、完了通知で戻る
 "$SCRIPT" "$WT_PATH" "origin/$DEFAULT_BRANCH"

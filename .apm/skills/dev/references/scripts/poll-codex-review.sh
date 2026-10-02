@@ -77,9 +77,13 @@ done
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # gh api の失敗を空の結果と見なさず、終了コード 3 で止める (空と見なすと利用上限や approved を取りこぼして waiting になる)。
-# watch ループの result=$(check) の中では errexit が効かないので、呼び出し側は「|| exit 3」で明示的に伝える
+# watch ループの result=$(check) の中では errexit が効かないので、呼び出し側は「|| exit 3」で明示的に伝える。
+# --paginate はページごとに別の JSON 配列を出すので、1 つの配列にまとめてから返す (まとめないと後段の jq が
+# ページごとに走り、時刻や eyes が複数行になって出力の JSON が組み立てられない)
 api() {
-  gh api "$1" --paginate 2>/dev/null || { printf '{"error":"gh api failed: %s"}\n' "$1" >&2; exit 3; }
+  local out
+  out=$(gh api "$1" --paginate 2>/dev/null) || { printf '{"error":"gh api failed: %s"}\n' "$1" >&2; exit 3; }
+  printf '%s' "$out" | jq -cs 'add // []'
 }
 
 # 1 ショット判定。stdout に 1 行 JSON を出す。

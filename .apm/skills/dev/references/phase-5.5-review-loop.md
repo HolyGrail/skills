@@ -117,7 +117,7 @@ pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 
 
 **状態の確定**: approved の知らせ、CI の緑、タイマーの完了は、どれもここに合流する。
 
-1. `poll-codex-review.sh` を 1 回呼ぶ。`new_review` なら RESPONDING に入る。`approved` なら `review.approved_at` を、`usage_limited` なら `review.timeout_reason = "usage-limit"` を保存する。`waiting` なら `review.wait_started_at` からの経過を `total_wait_seconds` として、State machine の `signal=waiting` の分岐 (`@codex review` を 1 回投げる / CI-only / no-head-review / CONVERGED 判定) を適用する
+1. `poll-codex-review.sh` を 1 回呼ぶ。`new_review` なら RESPONDING に入る (保存済みの `review.approved_at` は、その後に届いたレビューで無効になるので null に戻す)。`new_review` 以外で `review.approved_at` が保存済みなら、approved として手順 2 に進む。push のたびに null に戻るので、残っている値は今の head への承認である (baseline を承認と同じ秒まで進めた後は、ポーリングがもう返さない。[手順 8](#8-台帳と-baseline-の更新) の「push しなかった場合」)。`approved` なら `review.approved_at` を、`usage_limited` なら `review.timeout_reason = "usage-limit"` を保存する。`waiting` なら `review.wait_started_at` からの経過を `total_wait_seconds` として、State machine の `signal=waiting` の分岐 (`@codex review` を 1 回投げる / CI-only / no-head-review / CONVERGED 判定) を適用する
 2. 終端の条件を満たし、head の CI が緑なら終える ([終端とエスカレーション](#終端とエスカレーション))。CI が pending ならターンを終え、CI の結果でもう一度ここに来る。fail なら CI_FIXING に入る
 3. 終端でなく、待機上限にも届いていなければ、残りの時間 (最大 `escalate_after_seconds / 2`) でタイマーを張り直し、`mcp__pr-relay__watch` を呼んでターンを終える
 
@@ -170,7 +170,9 @@ push するたびに CI と Codex の判定は仕切り直しになる (CI は H
   4. baseline 前進、ci_fix_rounds++、PR 本文の検証結果を同期更新      │
   └─ → [CI_WAIT] へ戻る (push で CI と Codex 再レビューが両方走る) ──┘
 
-[MONITORING] poll-codex-review.sh --watch (run_in_background)
+[MONITORING] review.approved_at が保存済みなら poll を 1 回 (--watch なし)。new_review なら保存値を null に
+             戻して RESPONDING、それ以外は signal=approved と同じ扱い
+             保存が無ければ poll-codex-review.sh --watch (run_in_background)
   ├─ signal=approved (last_push_at 以降に codex +1 か「Didn't find any major issues」)
   │     └─ CI が最新 push に対して緑であることを再確認 → [APPROVED] 終了
   ├─ signal=new_review (last_push_at 以降に codex review) → [RESPONDING]
@@ -261,7 +263,8 @@ Codex 監視は同梱スクリプト [`scripts/poll-codex-review.sh`](scripts/po
 ### 使い方
 
 ```bash
-# SKILL_DIR はスキルを読み込んだときの base directory ([phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー))
+# SKILL_DIR はスキルを読み込んだときの base directory。毎回代入する ([phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー))
+SKILL_DIR="<スキルの base directory>"
 SCRIPT="$SKILL_DIR/references/scripts/poll-codex-review.sh"
 
 # --watch: background で起動する (前景 sleep が禁止の環境のため run_in_background 必須)
@@ -353,7 +356,8 @@ P1 の指摘と、並行制御、状態遷移、永続化に触れる P2 の指�
 push するたびにクラウドのレビュー 1 回と CI 1 回を使う。ローカルの 1 パスも週間利用枠の 0.5〜1% を使い、クラウドのレビューと同じメーターに載る (2026-09-07 実測)。だから既定は focus 付きの 1 パスで、今回の修正とその影響先だけを見る。役割は「修正が不変条件を回復しているか、影響先を壊していないか」をクラウドの往復と CI を使う前に確かめることで、変更全体の再発見ではない。
 
 ```bash
-# SKILL_DIR はスキルを読み込んだときの base directory ([phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー) と同じ)
+# SKILL_DIR はスキルを読み込んだときの base directory。毎回代入する ([phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー) と同じ)
+SKILL_DIR="<スキルの base directory>"
 SCRIPT="$SKILL_DIR/references/scripts/local-codex-review.sh"
 # run_in_background で起動する (1 パス 4〜6 分)
 "$SCRIPT" "$WT_PATH" "origin/$DEFAULT_BRANCH" --focus "<今回直した振る舞いと、その影響先>"
@@ -386,7 +390,7 @@ PUSHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)                    # 実際に push し
 - `review.processed_comment_ids` に対応した id を追加、`rebutted_comment_ids` に反論した id を追加、`processed_review_ids` に処理した review id を追加
 - **baseline (`review.last_push_at`) を必ず前進させる**:
   - push した場合: `review.last_push_at = NEW_PUSH_AT`、`review.wait_started_at = PUSHED_AT` (コミットから時間をおいて push しても、待機をレビューの来る前に打ち切らないよう、待機の基準は実際の push 時刻にする)、`review.last_push_commit = NEW_SHA`、`push_rounds += 1` (指摘対応を含む push だけ。CI 修正だけの push と Phase 5-bis の push は数えない)、`total_wait_seconds = 0` (poll モードの待機時間も push ごとに数え直す)。前の head について保存した `approved_at`、`timeout_reason`、`terminal_reason` は null に戻す。待ち方によらず、push はすべてこの更新を通る (Phase 5-bis の人手の push と CI 修正の push も含む)
-  - push しなかった場合: `review.last_push_at = 処理した最新 review の submitted_at`。前進させないと同じ review が次の MONITORING で再び `new_review` として返り、コメントは全て処理済みで 0 件、即 MONITORING、また同じ review、という無限スピンになる
+  - push しなかった場合: `review.last_push_at = 処理した最新 review の submitted_at`。前進させないと同じ review が次の MONITORING で再び `new_review` として返り、コメントは全て処理済みで 0 件、即 MONITORING、また同じ review、という無限スピンになる。ただし、そのポーリング出力の `approved_at` が review の `submitted_at` と同じ秒で、review の `commit_id` が現在の head と違う (前の head への遅れたレビューと、今の head への 👍 が重なった) ときは、`review.approved_at` にその時刻を保存し、CONVERGED 判定ではなく [APPROVED](#approved-による正常終了) の確認に進む。baseline を進めるとイベントは「より新しい」ものだけが返るので、同じ秒の 👍 は二度と返らない。review の `commit_id` が head と同じなら、同じ秒でも review を優先する (スクリプトの規則のまま)
 - `review.last_review_commit = 処理した最新 review の commit_id` を保存する。push しなかったラウンドで baseline をその review の `submitted_at` に進めると、再開後のポーリングはその review を返さない (`latest_review: null`) ので、CONVERGED 条件 1 はこの値で判定する。その commit_id が head と一致し、`head_local_review` が `"unreviewed"` なら `"cloud-reviewed"` に更新する (head を Codex が見たので、手順 6 の「Codex レビューが head を見るまで」が満たされる)
 - `review.rounds += 1` (受信したレビュー数)、`updated_at` 更新
 - push した場合は CI_WAIT に戻る (relay モードでは [待ち方](#待ち方-relay-モードと-poll-モード) の「push の後」の手順で待つ)。push しなかった場合は [CONVERGED 判定](#converged-push-を伴わないラウンドの終端) に進む。**push しなかったラウンドで `@codex review` は投げない** (同じ commit が再レビューされ、新しい指摘が出る)
