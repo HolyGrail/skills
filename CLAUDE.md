@@ -32,7 +32,9 @@ python3 scripts/validate-skills.py
 
 ## 作業上の注意
 
-- APM のコンパイル成果物（`.claude/` `.cursor/` `.codex/` `.github/skills/` `AGENTS.md` など）は `.gitignore` で除外している。`.github/workflows/` は管理対象。このリポジトリで `apm install` / `apm compile` を走らせると、この `CLAUDE.md` が生成物で上書きされうるので差分を確認する
+- APM のコンパイル成果物（`.claude/`、`.cursor/`、`.codex/`、`.github/skills/` など）は `.gitignore` で除外している。
+  ルートの `AGENTS.md` と `CLAUDE.md`、`.github/workflows/` は管理対象。
+  このリポジトリで `apm install` / `apm compile` を走らせると、`AGENTS.md` と `CLAUDE.md` が生成物で上書きされうるので差分を確認する。
 - 多くの skill の実使用版はユーザーのローカル `~/.claude/skills/<name>/` にあり、このリポジトリはそこから同期して公開する運用（例: コミット「Sync /dev skill with the local version」）。同期作業ではローカル版を正として差分を取り込む
 - Skill / Prompt / Agent を追加・削除したら README.md の一覧表と件数見出し（「Skills (20)」など）も更新する
 - skill 本文は日本語で書かれている。コミットメッセージは英語の命令形

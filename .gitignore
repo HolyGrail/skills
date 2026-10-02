@@ -11,3 +11,6 @@ apm_modules/
 .github/instructions/
 .github/prompts/
 AGENTS.md
+
+# Track the repository contributor guide
+!/AGENTS.md
