@@ -24,7 +24,7 @@
 #     --watch            内部で短間隔ポーリング (変化検知 or タイムアウトで exit)。
 #                        ※ run_in_background な Bash で起動すること (前景 sleep は環境で禁止)。
 #     --interval <sec>   ポーリング間隔 (default 30)
-#     --max-wait <sec>   --watch の最大待機秒 (default 540。Bash の 600s 上限内に収める)
+#     --max-wait <sec>   --watch の最大待機秒 (default 540。前景 Bash の 600s 上限内にも収まる値)
 #     --bot <login>      Codex bot のログイン名 (default chatgpt-codex-connector[bot])
 #
 # 出力 (stdout, 1 行 JSON):
@@ -38,8 +38,8 @@
 #     "eyes_present": true|false,            # codex の 👀 が今ついているか (補助情報)
 #     "checked_at": "<ISO>"
 #   }
-# signal 優先順位: approved > new_review > usage_limited > waiting。ただし approved は、baseline 以降の最新 review 以降に
-# 付いたときだけ (approved の後に review が届いていれば new_review)。
+# signal 優先順位: approved > new_review > usage_limited > waiting。ただし approved は、baseline 以降の最新 review より後に
+# 付いたときだけ (approved の後か同じ秒に review が届いていれば new_review)。
 # 終了コード: 0 = 正常 (signal は JSON 参照)、2 = 引数エラー、3 = gh/jq 実行エラー。
 
 set -euo pipefail
@@ -135,9 +135,10 @@ check() {
                outdated: (.line==null), commit_id, html_url, created_at, body}]')
   fi
 
-  # approved は、その時刻が baseline 以降の最新 review 以降のときだけ。approved の後に届いた review
-  # (同じ commit の再レビューで指摘が出た場合など) があれば new_review を返す。時刻は辞書順 = 時刻順
-  if [ -n "$approved_at" ] && { [ -z "$latest_review_at" ] || [[ ! "$approved_at" < "$latest_review_at" ]]; }; then
+  # approved は、その時刻が baseline 以降の最新 review より後のときだけ。approved の後に届いた review
+  # (同じ commit の再レビューで指摘が出た場合など) があれば new_review を返す。GitHub の時刻は秒単位なので、
+  # 同じ秒なら review を優先する (approved を勝たせると指摘を triage せずに終端へ進む)。時刻は辞書順 = 時刻順
+  if [ -n "$approved_at" ] && { [ -z "$latest_review_at" ] || [[ "$latest_review_at" < "$approved_at" ]]; }; then
     signal="approved"
   elif [ "$has_review" = "true" ]; then signal="new_review"
   elif [ -n "$usage_limit_at" ];   then signal="usage_limited"

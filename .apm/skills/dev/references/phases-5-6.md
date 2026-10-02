@@ -54,13 +54,16 @@ Codex のクラウドレビューは 1 パスに 1〜2 件ずつしか指摘を�
 掛ける条件: 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超える。どちらにも当たらなければ掛けずに PR を開き、`review.head_local_review = "cloud-first"` と記録する。
 
 ```bash
-SCRIPT=~/.claude/skills/dev/references/scripts/local-codex-review.sh
+# SKILL_DIR: このスキルを読み込んだときに示される base directory。プロジェクトローカルの APM インストールなら
+# <repo>/.claude/skills/dev、グローバルなら ~/.claude/skills/dev。~/.claude/skills/dev に固定すると、
+# プロジェクトローカルだけに入れた環境ではスクリプトが無く終了コード 127 で失敗する
+SCRIPT="$SKILL_DIR/references/scripts/local-codex-review.sh"
 # 1 パス 4〜6 分 (関連テストの実行や実 DB での再現を含む)。run_in_background で起動し、完了通知で戻る
 "$SCRIPT" "$WT_PATH" "origin/$DEFAULT_BRANCH"
 ```
 
 - **1 パス目**: 変更全体を対象にする。出た P1/P2 は成立を一次情報で確認し、成立するものを Phase 4 の修正ループで直す (修復の考え方は [phase-5.5-review-loop.md 手順 4〜5](phase-5.5-review-loop.md#4-修復記録))。P3 は `followups[]` に記録する
-- **2 パス目** (1 パス目で P1/P2 が出て直した場合のみ): `--focus "<直した振る舞いと影響先>"` を付けて掛ける。ここでも P1/P2 が出て直したら、その head はローカルレビューを通っていない。`review.head_local_review = "unreviewed"` として記録し、PR 本文の「レビュアー向けの前提」にその旨を書く。3 パス目は掛けない (ループを手元で再現するだけになる)
+- **2 パス目** (1 パス目で P1/P2 が出て直した場合のみ): `--focus "<直した振る舞いと影響先>"` を付けて掛ける。focus を付けるとレビュー範囲がその対象と影響先に限られ、変更全体は探し直さない。ここでも P1/P2 が出て直したら、その head はローカルレビューを通っていない。`review.head_local_review = "unreviewed"` として記録し、PR 本文の「レビュアー向けの前提」にその旨を書く。3 パス目は掛けない (ループを手元で再現するだけになる)
 - codex CLI が無い、またはタイムアウトしたときは `head_local_review = "skipped"` と理由を記録して続行する
 - パスごとに見つかる集合は変わる。ローカルで出なかった指摘がクラウドで出ることはある。それは Phase 5.5 で処理する
 - 掛けたパス数を `review.local_review_passes` に記録する。効果は `~/.claude/tools/codex-review-metrics/compare.py` の表 D (ローカル事前レビュー別のクラウド 1 ラウンド目の指摘数) で確かめる
@@ -109,7 +112,7 @@ PR body の Test plan は **「自分で確認できる範囲は確認した状�
 
 ### PR body テンプレート
 
-Phase 5 (初回 PR 作成) の body は次のフォーマットで生成する。Phase 5-bis (Post-PR) のテンプレートとの差分は **「変更履歴」節の有無だけ** で、`## Test plan` を含む他の節は共通。Post-PR 追加修正が発生したら 5-bis で「変更履歴」節が足され、**Test plan 節はここで構築した内容を引き継いで最新化する** (5-bis で Test plan を落とさない)。
+Phase 5 (初回 PR 作成) の body は次のフォーマットで生成する。Phase 5-bis (Post-PR) のテンプレートとの差分は **「変更履歴」節の有無だけ** で、`## Test plan` と「レビュアー向けの前提」を含む他の節は共通。Post-PR 追加修正が発生したら 5-bis で「変更履歴」節が足され、**Test plan 節と「レビュアー向けの前提」節はここで構築した内容を引き継いで最新化する** (5-bis で落とさない)。
 
 ```markdown
 ## Summary
@@ -235,6 +238,8 @@ cd "$WT_PATH" && git add ... && git commit -m "..." && git push
 
 PR のコミットは自動追従する (`gh pr edit` 不要)。
 
+push したら、Phase 5.5 の [手順 8](phase-5.5-review-loop.md#8-台帳と-baseline-の更新) の「push した場合」の更新を通す (`last_push_at`、`wait_started_at`、`last_push_commit`、`total_wait_seconds`、前の head について保存した `approved_at` と `timeout_reason` と `terminal_reason`)。あわせて `review.loop_status = "monitoring"` にし、ローカルレビューを掛けていなければ `review.head_local_review = "cloud-first"` にする。この更新を通さないと、前の head の baseline と終端状態が残り、新しい head が古い 👍 で approved に終わりうる。人が起動した追加修正の push なので、`push_rounds` (指摘対応の予算) には数えない。
+
 #### 6. PR 本文の再生成と更新 (重要、手動では忘れやすい)
 
 **「再生成」は Test plan を捨てることではない**。本文を全文置換する都合上、Phase 5 で構築した `## Test plan` 節 (チェック済み / 未チェック項目) を必ず引き継いで最新化する。手順 1 で取得した現在の PR 本文 (`gh pr view ... --json body`) から既存 Test plan を回収し、追加修正分を反映させること。
@@ -263,6 +268,14 @@ PR 本文テンプレート (冒頭に変更履歴、以降は再生成。**`## 
 |---------|---------|------|------|
 | ...     | ...     | PASS | -    |
 
+## レビュアー向けの前提
+
+- 意図: <この変更が何を保証し、何を保証しないか。追加修正で変わったら更新>
+- 不変条件: <変更後も保たれるべき性質>
+- 意図的に対応しないこと: <既知の指摘候補と判断の根拠。Codex 指摘の rebut / accepted-risk もここに足す>
+- 環境制約: <ローカルで検証できなかった経路と理由>
+- ローカルレビュー: <これまでのパス数と、最新のパスの結果。2 パス目で直して未レビューの head ならその旨>
+
 ## Test plan
 
 ローカル検証可能項目 (Phase 3 + Phase 5 + 今回の追加修正で実行済み):
@@ -290,6 +303,8 @@ PR 本文テンプレート (冒頭に変更履歴、以降は再生成。**`## 
 - 今回の追加修正で新たに検証が必要になった項目を追加し、Test plan 構築ルール ([Phase 5 の「Test plan 構築ルール」](#test-plan-構築ルール)) に従って実行・分類する
 - 追加修正で既存の `[x]` 項目に回帰リスクがあれば、Phase 3 再実行 (手順 3) の結果で状態を更新する
 - 捏造禁止は Phase 5 と同じく適用 (実行していない項目を `[x]` にしない)
+
+**「レビュアー向けの前提」節も同じく引き継ぐ**: 現在の PR 本文からこの節を回収して土台にし、追加修正や Codex レビュー対応で意図、不変条件、意図的に対応しないことが変わった分だけ書き換える。「ローカルレビュー」の行は、そのラウンドで掛けたパスの結果と `review.head_local_review` に合わせて更新する。節を省くと、全文置換の最初の更新で Phase 5 に書いた前提が消える。
 
 更新コマンド:
 
