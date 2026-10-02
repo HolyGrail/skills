@@ -1,6 +1,6 @@
 # Phase 5.5: CI + Review Loop
 
-Phase 5 (Open PR 作成) と Phase 6 (Cleanup) の間に挟まる、**CI と Codex 自動レビューの能動監視 + 自動対応ループ**。Phase 5 完了直後に自動突入する。PR open をトリガーに CI と Codex bot のレビューが走るので、本フェーズは (1) CI checks の完了を監視して FAIL があれば修正 push、(2) Codex の指摘を triage し、成立を確認できた P1/P2 を直してローカルレビューを通し、1 回だけ push して返信する、を **CI 全成功 + レビュー収束** まで繰り返す。収束の判定は [終端とエスカレーション](#終端とエスカレーション) に定める。「👍 が付くまで push を続ける」ではない。
+Phase 5 (Open PR 作成) と Phase 6 (Cleanup) の間に挟まる、**CI と Codex 自動レビューの能動監視 + 自動対応ループ**。Phase 5 完了直後に自動突入する。PR open をトリガーに CI と Codex bot のレビューが走るので、本フェーズは (1) CI checks の完了を監視して FAIL があれば修正 push、(2) Codex の指摘を triage し、成立を確認できた P1/P2 を直して検証し、1 回だけ push して返信する、を **CI 全成功 + レビュー収束** まで繰り返す。収束の判定は [終端とエスカレーション](#終端とエスカレーション) に定める。「👍 が付くまで push を続ける」ではない。
 
 SKILL.md 本体から「Phase 5 完了後に自動突入するとき」「`/dev review` で再開するとき」「CI / Codex レビュー対応ループの state machine / 監視ロジックが必要なとき」に参照する。
 
@@ -352,9 +352,9 @@ P1 の指摘と、並行制御、状態遷移、永続化に触れる P2 の指�
 
 ### 6. push 前ローカルレビュー (既定では掛けない)
 
-既定では掛けず、`head_local_review = "cloud-first"` と記録して手順 7 に進む。ローカルの 1 パスはクラウドのレビュー 1 回より週間メーターを大きく動かし、掛けてもラウンドは減らなかった (根拠は [phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー))。修正が不変条件を回復しているか、影響先を壊していないかは、手順 4 の修復記録と手順 5 の検証 (同根の全箇所の修正、Phase 3 の再実行、P1 の再現テスト) で確かめる。
+`review.local_review_requested` が `true` でなければ掛けず、`head_local_review = "cloud-first"` と記録して手順 7 に進む。ローカルの 1 パスはクラウドのレビュー 1 回より週間メーターを大きく動かし、掛けてもラウンドは減らなかった (根拠は [phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー))。修正が不変条件を回復しているか、影響先を壊していないかは、手順 4 の修復記録と手順 5 の検証 (同根の全箇所の修正、Phase 3 の再実行、P1 の再現テスト) で確かめる。
 
-ユーザーがこのタスクでローカルレビューを明示的に求めたときだけ、次の手順で focus 付きのパスを掛ける。役割は修正の検証で、変更全体の再発見ではない。
+`review.local_review_requested == true` のとき (ユーザーがこのタスクでローカルレビューを明示的に求めたとき) だけ、次の手順で focus 付きのパスを掛ける。Phase 5.5 の途中や `/dev review` での再開時に求められたら、その時点で `true` を保存してから掛ける。役割は修正の検証で、変更全体の再発見ではない。
 
 ```bash
 # SKILL_DIR はスキルを読み込んだときの base directory。毎回代入する ([phases-5-6.md の PR 作成前ローカルレビュー](phases-5-6.md#pr-作成前ローカルレビュー) と同じ)
@@ -550,6 +550,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "push_rounds": 0,                     // 指摘対応で push した回数 (予算の対象。CI 修正だけの push は含めない)
   "max_push_rounds": 3,
   "ci_fix_rounds": 0,
+  "local_review_requested": false,      // ユーザーがこのタスクでローカルレビューを求めたか。true のときだけ掛ける (再開後も引き継ぐ)
   "local_review_passes": 0,             // Phase 5 と 5.5 で掛けたローカルレビューのパス数
   "head_local_review": "clean",         // clean|unreviewed|skipped|cloud-first|cloud-reviewed
   "codex_review_requested": false,      // この PR で @codex review を投げたか (1 PR 1 回)

@@ -28,7 +28,7 @@ Phase 5 に進む前に、以下を満たす:
 
 1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
 2. 変更内容を分析してコミットメッセージを作成し、ローカルにコミットする (push はまだしない)
-3. **PR 作成前ローカルレビューは既定で掛けない** (詳細は次節「PR 作成前ローカルレビュー」): 最初の広い発見は「徹底的なコードレビュー」を ON にしたクラウドのレビュー (2026-09-07 以降) に任せる。ユーザーがこのタスクでローカルレビューを明示的に求めたときだけ、`scripts/local-codex-review.sh` で変更全体を AGENTS.md の基準でレビューし、P1/P2 を直してから push する。セッションに `review` オブジェクトがまだ無ければ、この手順で [session-management.md](session-management.md#スキーマ) の初期値 (`loop_status: null`、`push_rounds: 0`、`findings: []` など) で作り、`local_review_passes` と `head_local_review` (掛けなかったときは `"cloud-first"`) をここに書く。レビューの指摘で直したら Phase 3 の検証を再実行し (手順 5 の Test plan はこの結果から作る)、直した分を手順 4 の前にコミットし、`git -C "$WT_PATH" status --porcelain` が空であることを確かめる
+3. **PR 作成前ローカルレビューは既定で掛けない** (詳細は次節「PR 作成前ローカルレビュー」): 最初の広い発見は「徹底的なコードレビュー」を ON にしたクラウドのレビュー (2026-09-07 以降) に任せる。ユーザーがこのタスクでローカルレビューを明示的に求めたとき (`review.local_review_requested == true`) だけ、`scripts/local-codex-review.sh` で変更全体を AGENTS.md の基準でレビューし、P1/P2 を直してから push する。セッションに `review` オブジェクトがまだ無ければ、この手順で [session-management.md](session-management.md#スキーマ) の初期値 (`loop_status: null`、`push_rounds: 0`、`findings: []` など) で作り、`local_review_requested`、`local_review_passes`、`head_local_review` (掛けなかったときは `"cloud-first"`) をここに書く。レビューの指摘で直したら Phase 3 の検証を再実行し (手順 5 の Test plan はこの結果から作る)、直した分を手順 4 の前にコミットし、`git -C "$WT_PATH" status --porcelain` が空であることを確かめる
 4. プッシュ: `cd "$WT_PATH" && git push -u origin "$BRANCH"`
 5. **Test plan 構築**: 計画 issue の「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は「Test plan 構築ルール」)
 6. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は「PR body テンプレート」と「PR 作成コマンド」)。本文には「レビュアー向けの前提」節を含める (意図、不変条件、意図的に対応しないこと、環境制約、ローカルレビューの結果):
@@ -55,7 +55,7 @@ Phase 5 に進む前に、以下を満たす:
 
 ローカルで先に消化しても、クラウドの往復は減らなかった。PR 作成前に全体レビューを通した 4 PR (claude-mods #8、#9、#10 と skills #13) でも、クラウドの 1 ラウンド目は 3〜6 件を出した。ローカルレビューを 1 PR に 2〜6 パス掛けた 5 PR (前記 4 件と skills #9) のラウンドは 3〜6 回で、掛けなかった claude-mods #21 の 4 回と差が見えない。
 
-掛けるのは、ユーザーがこのタスクでローカルレビューを明示的に求めたときだけにする。リスクの高い変更 (並行制御、状態遷移、永続化、schema、認可、500 行超) でも自動では掛けない。掛けなければ `review.head_local_review = "cloud-first"` と記録する。掛けるときの手順は次のとおり。
+掛けるのは、ユーザーがこのタスクでローカルレビューを明示的に求めたときだけにする。求められた時点で `review.local_review_requested = true` を保存し (`review` がまだ無ければ初期値で作る)、Phase 5.5 の push 前と中断後の再開でもこの値で判定する。リスクの高い変更 (並行制御、状態遷移、永続化、schema、認可、500 行超) でも自動では掛けない。掛けなければ `review.head_local_review = "cloud-first"` と記録する。掛けるときの手順は次のとおり。
 
 ```bash
 # SKILL_DIR には、このスキルを読み込んだときに示される base directory の絶対パスを毎回代入する (環境変数として
