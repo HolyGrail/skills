@@ -26,7 +26,7 @@ CI uses Python 3.12. There is no application build or development server. To try
 
 ## Coding Style & Naming Conventions
 
-Use Markdown with YAML frontmatter, descriptive headings, and fenced command examples. Match the surrounding language and formatting; most instructional content is Japanese. Use two-space YAML indentation and four-space Python indentation. No formatter or general-purpose linter is configured.
+Use YAML frontmatter for `SKILL.md`, `*.prompt.md`, and `*.agent.md` entry points. Keep `README.md` and reference documents as ordinary Markdown without frontmatter. Use descriptive headings and fenced command examples. Match the surrounding language and formatting; most instructional content is Japanese. Use two-space YAML indentation and four-space Python indentation. No formatter or general-purpose linter is configured.
 
 Skill names must match their directory, use lowercase kebab-case, and contain at most 64 characters. Supply a nonempty `description` of at most 1,024 characters; describe environment requirements in optional `compatibility` metadata. Keep skill bodies within the recommended 500 lines by moving detail into linked references. References over 100 lines should include `## Contents`.
 
