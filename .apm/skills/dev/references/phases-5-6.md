@@ -238,7 +238,7 @@ rm -f "$PR_BODY"
 
 #### 5. コミット + push
 
-push の直前に、Phase 5.5 の [手順 7](phase-5.5-review-loop.md#7-commit--push--返信--pr-本文) と同じくポーリングを 1 回掛ける。追加修正の間に届いた Codex のレビューは、push で baseline に越えられると以後の取得対象から外れるので、新着があれば Phase 5.5 の手順 2〜5 で triage し、同じ push に含める。
+push の直前に、Phase 5.5 の [手順 7](phase-5.5-review-loop.md#7-commit--push--返信--pr-本文) と同じくポーリングを 1 回掛ける (`--processed-reviews` は `review.processed_review_ids`)。追加修正の間に届いた Codex のレビューがあれば、Phase 5.5 の手順 2〜5 で triage し、同じ push に含める。
 
 ```bash
 cd "$WT_PATH" && git add ... && git commit -m "..." && git push
