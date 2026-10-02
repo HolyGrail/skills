@@ -38,7 +38,8 @@
 #     "eyes_present": true|false,            # codex の 👀 が今ついているか (補助情報)
 #     "checked_at": "<ISO>"
 #   }
-# signal 優先順位: approved > new_review > usage_limited > waiting。
+# signal 優先順位: approved > new_review > usage_limited > waiting。ただし approved は、baseline 以降の最新 review 以降に
+# 付いたときだけ (approved の後に review が届いていれば new_review)。
 # 終了コード: 0 = 正常 (signal は JSON 参照)、2 = 引数エラー、3 = gh/jq 実行エラー。
 
 set -euo pipefail
@@ -81,7 +82,7 @@ api() {
 # 1 ショット判定。stdout に 1 行 JSON を出す。
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
-  local fresh_reviews latest_review review_ids has_review new_comments signal
+  local fresh_reviews latest_review latest_review_at review_ids has_review new_comments signal
 
   reactions=$(api "repos/$REPO/issues/$PR/reactions") || exit 3
   reviews=$(api "repos/$REPO/pulls/$PR/reviews") || exit 3
@@ -120,6 +121,7 @@ check() {
       | if . == null then null
         else {id, commit_id, submitted_at, state, html_url: .html_url, body} end)')
   review_ids=$(printf '%s' "$fresh_reviews" | jq -c '[.[].id]')
+  latest_review_at=$(printf '%s' "$fresh_reviews" | jq -r 'map(.submitted_at) | max // ""')
   has_review=$(printf '%s' "$review_ids" | jq 'length > 0')
 
   # baseline 以降の「全」codex review に紐づく inline comments (単一 review に絞ると、
@@ -133,7 +135,10 @@ check() {
                outdated: (.line==null), commit_id, html_url, created_at, body}]')
   fi
 
-  if   [ -n "$approved_at" ];      then signal="approved"
+  # approved は、その時刻が baseline 以降の最新 review 以降のときだけ。approved の後に届いた review
+  # (同じ commit の再レビューで指摘が出た場合など) があれば new_review を返す。時刻は辞書順 = 時刻順
+  if [ -n "$approved_at" ] && { [ -z "$latest_review_at" ] || [[ ! "$approved_at" < "$latest_review_at" ]]; }; then
+    signal="approved"
   elif [ "$has_review" = "true" ]; then signal="new_review"
   elif [ -n "$usage_limit_at" ];   then signal="usage_limited"
   else                                  signal="waiting"; fi

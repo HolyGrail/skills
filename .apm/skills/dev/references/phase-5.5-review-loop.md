@@ -83,7 +83,7 @@ SKILL.md 本体から「Phase 5 完了後に自動突入するとき」「`/dev 
 
 ### セッション復元
 
-`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。`last_review_commit` が無く `processed_review_ids` があるときは、最後の id の review を `gh api repos/{owner}/{repo}/pulls/{n}/reviews/{id} --jq .commit_id` で引いて補う (null のままだと、push しないラウンドの後で再開したセッションが、レビュー済みの head を未レビューと判定する)。`wait_started_at` が無ければ `last_push_commit` のコミット時刻で補う (`last_push_at` は push しないラウンドで進んでいることがある)。
+`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。`last_review_commit` が無く `processed_review_ids` があるときは、最後の id の review を `gh api repos/{owner}/{repo}/pulls/{n}/reviews/{id} --jq .commit_id` で引いて補う (null のままだと、push しないラウンドの後で再開したセッションが、レビュー済みの head を未レビューと判定する)。`wait_started_at` が無ければ再開した時刻で補う (旧セッションの `last_push_at` はコミット時刻で、push より前になりうる。再開時刻なら待機を短く見積もるだけで、レビューの来る前に終わらせることはない)。
 
 ---
 
@@ -277,7 +277,7 @@ SCRIPT="$REPO_ROOT/.claude/skills/dev/references/scripts/poll-codex-review.sh"
                     "html_url":...,"created_at":...,"body":...}],
    "eyes_present":bool,"checked_at":"<ISO>"}
   ```
-- signal 優先順位: **approved > new_review > usage_limited > waiting**。
+- signal 優先順位: **approved > new_review > usage_limited > waiting**。ただし approved は、その時刻が baseline 以降の最新の review 以降のときだけ返る。approved の後に review が届いていれば (同じ commit の再レビューで指摘が出た場合など) new_review を返す (pr-relay の判定と同じ規則)。
 - `gh api` が失敗すると、結果を空とは見なさず終了コード 3 で終わる (空と見なすと、利用上限や approved を取りこぼして `waiting` になる)。終了コード 3 は `waiting` として扱わず、時間をおいて 1 回だけ再実行し、それでも失敗したら認証やレート制限を確かめて報告する
 - `approved_at` は 👍 reaction と「Didn't find any major issues」コメントのうち新しい方。`latest_review.commit_id` が head と一致すれば head はレビュー済み。
 
@@ -365,7 +365,8 @@ SCRIPT=~/.claude/skills/dev/references/scripts/local-codex-review.sh
 ```bash
 cd "$WT_PATH" && git add -A && git commit -m "fix: Codex レビュー指摘に対応 (round N)" && git push
 NEW_SHA=$(git -C "$WT_PATH" rev-parse HEAD)
-NEW_PUSH_AT=$(git -C "$WT_PATH" show -s --format=%cI HEAD)  # ISO8601
+NEW_PUSH_AT=$(git -C "$WT_PATH" show -s --format=%cI HEAD)  # ISO8601。イベントの baseline (取りこぼすより早めでよい)
+PUSHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)                    # 実際に push した時刻。待機時間の基準
 ```
 
 - `fix` が 0 件 (rebut / followup / reply-only のみ) なら push しない
@@ -378,7 +379,7 @@ NEW_PUSH_AT=$(git -C "$WT_PATH" show -s --format=%cI HEAD)  # ISO8601
 - `review.findings[]` に各コメントを追記する: `{id, round, severity, path, title, validity, disposition, evidence, sha, issue_url}` ([セッション保存](#セッション保存))
 - `review.processed_comment_ids` に対応した id を追加、`rebutted_comment_ids` に反論した id を追加、`processed_review_ids` に処理した review id を追加
 - **baseline (`review.last_push_at`) を必ず前進させる**:
-  - push した場合: `review.last_push_at = review.wait_started_at = NEW_PUSH_AT`、`review.last_push_commit = NEW_SHA`、`push_rounds += 1`。前の head について保存した `approved_at` と `timeout_reason` は null に戻す (待ち方によらず、push はすべてこの更新を通る)
+  - push した場合: `review.last_push_at = NEW_PUSH_AT`、`review.wait_started_at = PUSHED_AT` (コミットから時間をおいて push しても、待機をレビューの来る前に打ち切らないよう、待機の基準は実際の push 時刻にする)、`review.last_push_commit = NEW_SHA`、`push_rounds += 1`、`total_wait_seconds = 0` (poll モードの待機時間も push ごとに数え直す)。前の head について保存した `approved_at` と `timeout_reason` は null に戻す (待ち方によらず、push はすべてこの更新を通る)
   - push しなかった場合: `review.last_push_at = 処理した最新 review の submitted_at`。前進させないと同じ review が次の MONITORING で再び `new_review` として返り、コメントは全て処理済みで 0 件、即 MONITORING、また同じ review、という無限スピンになる
 - `review.last_review_commit = 処理した最新 review の commit_id` を保存する。push しなかったラウンドで baseline をその review の `submitted_at` に進めると、再開後のポーリングはその review を返さない (`latest_review: null`) ので、CONVERGED 条件 1 はこの値で判定する
 - `review.rounds += 1` (受信したレビュー数)、`updated_at` 更新
@@ -539,7 +540,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "last_push_at": "2026-05-30T01:00:00Z",
   "last_push_commit": "abc1234...",
   "last_review_commit": null,          // 最後に処理した Codex review の commit_id (CONVERGED 条件 1 の判定用)
-  "wait_started_at": "2026-05-30T01:00:00Z", // 最後の push の時刻。push しないラウンドでは動かさない (待機時間と relay モードのタイマーの基準)
+  "wait_started_at": "2026-05-30T01:00:00Z", // 最後に実際に push した時刻 (コミット時刻ではない)。push しないラウンドでは動かさない (待機時間と relay モードのタイマーの基準)
   "processed_review_ids": [],
   "processed_comment_ids": [],
   "rebutted_comment_ids": [],
