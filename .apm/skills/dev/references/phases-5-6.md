@@ -63,7 +63,7 @@ SCRIPT="$SKILL_DIR/references/scripts/local-codex-review.sh"
 ```
 
 - **1 パス目**: 変更全体を対象にする。出た P1/P2 は成立を一次情報で確認し、成立するものを Phase 4 の修正ループで直す (修復の考え方は [phase-5.5-review-loop.md 手順 4〜5](phase-5.5-review-loop.md#4-修復記録))。P3 は `followups[]` に記録する
-- **2 パス目** (1 パス目で P1/P2 が出て直した場合のみ): `--focus "<直した振る舞いと影響先>"` を付けて掛ける。focus を付けるとレビュー範囲がその対象と影響先に限られ、変更全体は探し直さない。ここでも P1/P2 が出て直したら、その head はローカルレビューを通っていない。`review.head_local_review = "unreviewed"` として記録し、PR 本文の「レビュアー向けの前提」にその旨を書く。3 パス目は掛けない (ループを手元で再現するだけになる)
+- **2 パス目** (1 パス目で P1/P2 が出て直した場合のみ): `--focus "<直した振る舞いと影響先>"` を付けて掛ける。ここでも P1/P2 が出て直したら、その head はローカルレビューを通っていない。`review.head_local_review = "unreviewed"` として記録し、PR 本文の「レビュアー向けの前提」にその旨を書く。3 パス目は掛けない (ループを手元で再現するだけになる)
 - codex CLI が無い、またはタイムアウトしたときは `head_local_review = "skipped"` と理由を記録して続行する
 - パスごとに見つかる集合は変わる。ローカルで出なかった指摘がクラウドで出ることはある。それは Phase 5.5 で処理する
 - 掛けたパス数を `review.local_review_passes` に記録する。効果は `~/.claude/tools/codex-review-metrics/compare.py` の表 D (ローカル事前レビュー別のクラウド 1 ラウンド目の指摘数) で確かめる
@@ -238,7 +238,7 @@ cd "$WT_PATH" && git add ... && git commit -m "..." && git push
 
 PR のコミットは自動追従する (`gh pr edit` 不要)。
 
-push したら、Phase 5.5 の [手順 8](phase-5.5-review-loop.md#8-台帳と-baseline-の更新) の「push した場合」の更新を通す (`last_push_at`、`wait_started_at`、`last_push_commit`、`total_wait_seconds`、前の head について保存した `approved_at` と `timeout_reason` と `terminal_reason`)。あわせて `review.loop_status = "monitoring"` にし、ローカルレビューを掛けていなければ `review.head_local_review = "cloud-first"` にする。この更新を通さないと、前の head の baseline と終端状態が残り、新しい head が古い 👍 で approved に終わりうる。人が起動した追加修正の push なので、`push_rounds` (指摘対応の予算) には数えない。
+push したら、Phase 5.5 の [手順 8](phase-5.5-review-loop.md#8-台帳と-baseline-の更新) の「push した場合」の更新 (baseline の前進と、前の head の判定の初期化) を通す。あわせて `review.loop_status = "monitoring"` にし、ローカルレビューを掛けていなければ `review.head_local_review = "cloud-first"` にする。この更新を通さないと、前の head の baseline と終端状態が残り、新しい head が古い 👍 で approved に終わりうる。人が起動した追加修正の push なので、`push_rounds` (指摘対応の予算) には数えない。
 
 #### 6. PR 本文の再生成と更新 (重要、手動では忘れやすい)
 

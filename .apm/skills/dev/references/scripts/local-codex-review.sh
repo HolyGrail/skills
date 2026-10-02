@@ -35,7 +35,7 @@ LOG=""
 NOTE=0
 
 usage() {
-  sed -n '2,33p' "$0" >&2
+  sed -n '2,28p' "$0" >&2
   exit 2
 }
 
@@ -70,18 +70,18 @@ fi
 SCOPE="Review the changes between commit $BASE_SHA and the current working tree (HEAD is $HEAD_SHA; uncommitted changes are part of the change set). Run: git diff $BASE_SHA and git status --short (for new untracked files) to see the full change set, and read the surrounding code and callers as needed.
 Apply the 'Code review' / 'Code Review Rules' section of AGENTS.md (root and nested) as the review criteria."
 REPORT="Verify findings against real behavior where it matters (run only the tests related to the changed files, reproduce with real data or the real database); do not run the whole test suite.
+Keep searching within that scope until you find no new P1 or P2 findings.
 Then list every P1/P2 finding with severity tag, file and line, the triggering condition, and the concrete consequence. Do not report P3 or style-only items."
 if [ -z "$FOCUS" ]; then
   # 全体レビュー (Phase 5 の 1 パス目): 変更全体を網羅的に探す
   PROMPT="$SCOPE
-Be exhaustive: keep searching until you find no new P1 or P2 findings. When you find one instance of a defect pattern, inspect every other occurrence and affected consumer in the change set and report them together.
+Be exhaustive across the whole change set. When you find one instance of a defect pattern, inspect every other occurrence and affected consumer in the change set and report them together.
 $REPORT"
 else
   # 限定レビュー (Phase 5 の 2 パス目、Phase 5.5 の push 前): focus の対象と影響先だけを見る。
   # 変更全体の探し直しはクラウドのレビューに任せ、時間と利用枠を focus の検証に使う
   PROMPT="$SCOPE
 Limit this review to: $FOCUS. Check whether that change restores the intended behavior and whether it breaks its affected code (callers, consumers, and other occurrences of the same pattern). Do not search the rest of the change set for unrelated defects.
-Within that scope, keep searching until you find no new P1 or P2 findings.
 $REPORT"
 fi
 

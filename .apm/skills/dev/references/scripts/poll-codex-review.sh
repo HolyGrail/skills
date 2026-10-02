@@ -32,6 +32,9 @@
 #     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
 #     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
+#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」より後の
+#                                            # 利用上限コメントの時刻 (上限がまだ戻っていない)。push で baseline が
+#                                            # 利用上限コメントを越えても、待機上限での分類に使える
 #     "latest_review": {id, commit_id, submitted_at, ...} | null,  # 同以降の最新 codex review
 #     "new_comments": [ {id, pull_request_review_id, in_reply_to_id, path, line,
 #                        outdated, commit_id, html_url, created_at, body}, ... ],
@@ -50,7 +53,7 @@ MAX_WAIT=540
 WATCH=0
 
 usage() {
-  sed -n '2,44p' "$0" >&2
+  sed -n '2,46p' "$0" >&2
   exit 2
 }
 
@@ -83,6 +86,7 @@ api() {
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review latest_review_at review_ids has_review new_comments signal
+  local last_activity_at usage_limit_active_at
 
   reactions=$(api "repos/$REPO/issues/$PR/reactions") || exit 3
   reviews=$(api "repos/$REPO/pulls/$PR/reviews") || exit 3
@@ -105,6 +109,20 @@ check() {
   # last_push 以降の利用上限コメント
   usage_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg base "$BASE" \
     '[.[] | select(.user.login==$bot and .created_at > $base
+                   and (.body | test("reached your Codex usage limits"; "i")))]
+     | map(.created_at) | max // ""')
+
+  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) より後に
+  # 利用上限コメントがあれば、上限はまだ戻っていない
+  last_activity_at=$( { printf '%s' "$reviews" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and .submitted_at != null) | .submitted_at] | max // ""'
+                        printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and .content=="+1") | .created_at] | max // ""'
+                        printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+                          '[.[] | select(.user.login==$bot and (.body | test("Didn'"'"'t find any major issues"; "i")))
+                           | .created_at] | max // ""'; } | sort | tail -n 1)
+  usage_limit_active_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg after "$last_activity_at" \
+    '[.[] | select(.user.login==$bot and .created_at > $after
                    and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
 
@@ -148,6 +166,7 @@ check() {
     --arg signal "$signal" \
     --arg approved_at "$approved_at" \
     --arg usage_limit_at "$usage_limit_at" \
+    --arg usage_limit_active_at "$usage_limit_active_at" \
     --argjson latest_review "${latest_review:-null}" \
     --argjson new_comments "$new_comments" \
     --argjson eyes "${eyes:-false}" \
@@ -155,6 +174,7 @@ check() {
     '{signal: $signal,
       approved_at: (if $approved_at=="" then null else $approved_at end),
       usage_limit_at: (if $usage_limit_at=="" then null else $usage_limit_at end),
+      usage_limit_active_at: (if $usage_limit_active_at=="" then null else $usage_limit_active_at end),
       latest_review: $latest_review,
       new_comments: $new_comments,
       eyes_present: $eyes,
