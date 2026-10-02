@@ -2,7 +2,8 @@
 #
 # local-codex-review.sh — codex review CLI をプロンプトモードで呼び、BASE から作業ツリーまでの変更 (未コミットの fix を含む) を
 # AGENTS.md の Code review 基準でレビューする。--focus が無ければ変更全体を網羅的に、あれば focus の対象と影響先だけを見る。
-# /dev Phase 5 (PR 作成前) と Phase 5.5 (push 前) のローカルレビューに使う。
+# /dev Phase 5 (PR 作成前) と Phase 5.5 (push 前) のローカルレビューに使う。2026-10-02 から /dev は既定で呼ばず、
+# ユーザーが明示的に求めたときだけ使う (1 パスで週間メーターがおよそ 1〜1.5 ポイント動き、クラウドの往復は減らなかった)。
 #
 # 背景 (2026-09-07 に HolyGrail/GBF-community #1361 の修正前 head で観測):
 #   - codex review の --commit / --base は [PROMPT] と併用できない (引数エラーになる)。
@@ -12,7 +13,8 @@
 #     同じ変更に P2 を 2〜3 件返した (パスごとに見つかる集合は変わる。1 パスで全部出る保証はない)
 #   - AGENTS.md の Code review 節は読み込まれ、指摘に [AGENTS.md:L68] のような引用が付く
 #   - 1 パスの所要時間は 4〜6 分 (テストの実行や実 DB での再現を含む)。合計 100〜120 万トークン (9 割はキャッシュ入力) で、
-#     週間利用枠の 0.5〜1% を消費する (~/.codex/sessions の rate_limits で観測)。クラウドのレビューと同じメーターに載る
+#     週間利用枠の 0.5〜1% を消費する (~/.codex/sessions の rate_limits で観測)。2026-10-01〜02 の 22 パスは
+#     34〜373 万トークン、所要 3〜12 分で、メーターをおよそ 1〜1.5 ポイント動かした
 #
 # 使い方:
 #   local-codex-review.sh <worktree_path> <base_ref> [options]
@@ -35,7 +37,7 @@ LOG=""
 NOTE=0
 
 usage() {
-  sed -n '2,28p' "$0" >&2
+  sed -n '2,30p' "$0" >&2
   exit 2
 }
 

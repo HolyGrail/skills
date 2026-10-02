@@ -107,7 +107,7 @@
   - `rounds`: 受信した Codex レビューの数 (計測用)。旧セッションではこれが上限判定に使われていた
   - `push_rounds` / `max_push_rounds`: 指摘対応で push した回数と上限 (既定 3)。CI 修正だけの push は含めない。**エスカレーションの中で上限を上げない**
   - `ci_fix_rounds`: CI FAIL を修正 push した回数 (運用メトリクス。CI 状態自体は `gh pr checks` で常に最新を取得するため永続化しない)
-  - `local_review_passes` / `head_local_review`: Phase 5 と 5.5 で掛けたローカル Codex レビューのパス数と、head がローカルレビューを通っているか (`clean` / `unreviewed` / `skipped` / `cloud-first` = 条件に当たらず掛けなかった / `cloud-reviewed` = `unreviewed` だった head を Codex がレビューした)
+  - `local_review_passes` / `head_local_review`: Phase 5 と 5.5 で掛けたローカル Codex レビューのパス数と、head がローカルレビューを通っているか (`clean` / `unreviewed` / `skipped` / `cloud-first` = 掛けなかった (既定) / `cloud-reviewed` = `unreviewed` だった head を Codex がレビューした)
   - `codex_review_requested`: この PR で `@codex review` を投げたか (1 PR 1 回)
   - `last_push_at` / `last_push_commit`: **baseline-diff の基準**。これより新しい Codex イベントだけをシグナルとみなす (false-approve 防止)
   - `last_review_commit`: 最後に処理した Codex review の `commit_id`。push しないラウンドで baseline を進めた後も、head がレビュー済みかを判定するのに使う

@@ -2,7 +2,7 @@
 name: dev
 description: |
   git worktree (k1LoW/git-wt) 上にタスク専用環境を作り、計画 issue の登録から実装・検証・PR 作成・CI と Codex レビューへの対応までをセッション管理付きで自律実行し、マージ後の worktree とブランチの掃除も行う開発ワークフロー。新規タスクを隔離環境で進めたいとき、issue URL / #番号 を作業指示として渡してその issue 自身を計画書に使いたいとき、`/dev resume` で中断セッションを再開したいとき、`/dev cleanup` でマージ後の worktree とブランチを掃除したいときに使う。
-compatibility: Requires git, gh CLI, k1LoW/git-wt (`git wt`), and jq. Phase 2 で Claude Code 組み込みの `/simplify` を使う (実行不能なら skip を記録して続行)。Phase 5.5 は `gh pr checks` で CI を、Codex (`chatgpt-codex-connector[bot]`) 設定済みリポジトリではレビューも監視する (pr-relay mod があれば監視を任せ、無ければ `run_in_background` Bash でポーリングし、不能時は ScheduleWakeup)。Codex 未設定なら CI 監視のみ。ローカルレビューと実装委任に codex CLI (`codex review` / `codex exec`) を任意で使う (無ければ skip か subagent にフォールバック)
+compatibility: Requires git, gh CLI, k1LoW/git-wt (`git wt`), and jq. Phase 2 で Claude Code 組み込みの `/simplify` を使う (実行不能なら skip を記録して続行)。Phase 5.5 は `gh pr checks` で CI を、Codex (`chatgpt-codex-connector[bot]`) 設定済みリポジトリではレビューも監視する (pr-relay mod があれば監視を任せ、無ければ `run_in_background` Bash でポーリングし、不能時は ScheduleWakeup)。Codex 未設定なら CI 監視のみ。実装委任と、ユーザーが求めたときのローカルレビューに codex CLI (`codex exec` / `codex review`) を任意で使う (無ければ skip か subagent にフォールバック)
 ---
 
 # Dev
@@ -23,7 +23,7 @@ Plan から PR 作成・レビュー完了まで一貫した開発ワークフ�
 - `/dev <説明>`: 指定タスクで Phase 0 から開始し、**Phase 5.5 の終端 (CI 全成功 + レビュー収束) まで自律実行する**。Phase 1 の計画は技術方針を自律決定した上で **GitHub issue (計画 issue) として登録**する (ファイルとしてコミットしない。承認待ちで停止しない)
 - `/dev <issue URL | #番号>`: 指定 issue を作業指示として Phase 0 から開始。**その issue 自身を計画書として使い**、計画フォーマットに足りない節があれば計画確定後に本文を更新する ([phases-1-4.md Phase 1](references/phases-1-4.md#phase-1-plan-計画))
 - `/dev resume [slug]`: セッション再開。**`status == "pr-open"` のセッションを選ぶと post-PR モード (Phase 5-bis)** に入り、人手主導の追加修正 + PR 本文更新を行う
-- `/dev review [slug]`: **`status == "pr-open"` のセッションで CI+Review Loop (Phase 5.5) を再開する**。通常は Phase 5 (Open PR 作成) 完了直後に自動突入するため明示起動は不要で、セッションが中断した場合の再入口。CI (`gh pr checks`) と Codex (`chatgpt-codex-connector[bot]`) の 👀 → 指摘 → 👍 を監視し、CI FAIL の修正とレビュー指摘への自動対応 (成立確認 → 修復記録 → 修正 → push 前ローカルレビュー → push → 返信) を **CI 全成功 + レビュー収束まで、push 予算 3 回の中で自走**
+- `/dev review [slug]`: **`status == "pr-open"` のセッションで CI+Review Loop (Phase 5.5) を再開する**。通常は Phase 5 (Open PR 作成) 完了直後に自動突入するため明示起動は不要で、セッションが中断した場合の再入口。CI (`gh pr checks`) と Codex (`chatgpt-codex-connector[bot]`) の 👀 → 指摘 → 👍 を監視し、CI FAIL の修正とレビュー指摘への自動対応 (成立確認 → 修復記録 → 修正と検証 → push → 返信) を **CI 全成功 + レビュー収束まで、push 予算 3 回の中で自走**
 - `/dev cleanup`: cwd が worktree ならそのブランチが対象、違えばセッション一覧から選択。**merge 確認後に未着手の `followups[]` を GitHub issue として自動作成**
 - **初回のみ**: `wt.copyignored` 等の git-wt 設定を済ませると `.dev.vars` / `.env*` のコピー漏れを防げる ([references/setup.md](references/setup.md) 参照)
 
@@ -52,14 +52,13 @@ Phase 4: Fix         新規問題は解決まで修正ループ (3 回超えた�
                      既存問題は自動判断マトリクスで対応確定
                      (CI を落とす/安価なら今回 PR で修正、それ以外は followup 化)
 Phase 5: PR          全検証 PASS 後に **Open PR** を作成 (Draft にしない)。
-                     リスクの高い変更 (並行制御 / 状態遷移 / 永続化 / schema /
-                     認可、500 行超) だけ、作成前にローカル Codex レビューで
-                     P1/P2 を消化する (それ以外はクラウドの徹底的レビューに任せる)
+                     ローカル Codex レビューは既定で掛けず、最初の広い発見は
+                     クラウドの徹底的レビューに任せる (ユーザーが求めたときだけ掛ける)
                      セッションを status: "pr-open" に更新し、Phase 5.5 へ自動続行
 Phase 5.5: CI + Review Loop  Phase 5 から自動突入 (/dev review で再開も可)。
                      CI (gh pr checks) と Codex 自動レビューを能動監視し、
                      CI FAIL は修正して push、レビュー指摘は成立を確認して修正し、
-                     push 前にローカルレビューを通してから 1 回 push、返信する。
+                     同根の箇所をまとめて直し、検証してから 1 回 push、返信する。
                      **CI 全成功 + レビュー収束 (👍 か、head レビュー済みで
                      P1/P2 全件 disposition 済み) まで、push 予算 3 回の中で**繰り返す。
                      予算到達後は残指摘の一覧と推奨 disposition を提示してユーザー判断
@@ -79,9 +78,9 @@ Phase 6: Cleanup     /dev cleanup (または pr-relay の cleanup ボタン) で
 - **作業単位を subagent / Codex に委任するとき (Phase 1 の調査、Phase 2 / 5.5 の実装ステップ)** → [references/model-routing.md](references/model-routing.md)
   - 実行主体を自律選定するための判断原則 (確実にこなせる最小コスト・メイン文脈の最小化・検収コスト・委任オーバーヘッド)、実行主体カタログ (haiku 〜 メイン同格、codex)、判定手順と選定理由のナレーション、委任プロンプトの必須要素、`cwd=$WT_PATH` などの dev 固有 Codex ルール、検収 (diff レビュー) と 2 連続 FAIL での引き取り、メインに残る責務
 - **Phase 5 / Post-PR / Cleanup を実行するとき** → [references/phases-5-6.md](references/phases-5-6.md)
-  - **PR 作成前ローカルレビュー (`scripts/local-codex-review.sh`、最大 2 パス)**、Open PR 作成、PR body テンプレート (「レビュアー向けの前提」節を含む)、**Test plan 構築ルール (ローカル検証可能 / 人手必須の分類、Phase 3 で未実行の項目を Phase 5 内で能動的に追加実行、捏造禁止)**、`--body-file` 必須・デフォルトテンプレートフォールバック禁止、Phase 5.5 への自動続行、Post-PR の本文同期更新 (`gh pr edit --body-file`)、Cleanup の followup 自動 issue 化 (重複チェック・ラベル推定・5 件以上で確認)、worktree 削除フォールバック (`-D`)、**プロジェクト固有の cleanup 後処理フック (プロジェクトの CLAUDE.md に「`/dev cleanup` 後の後処理」節があれば実行)**
+  - **PR 作成前ローカルレビュー (既定では掛けない。ユーザーが求めたときだけ `scripts/local-codex-review.sh` で最大 2 パス)**、Open PR 作成、PR body テンプレート (「レビュアー向けの前提」節を含む)、**Test plan 構築ルール (ローカル検証可能 / 人手必須の分類、Phase 3 で未実行の項目を Phase 5 内で能動的に追加実行、捏造禁止)**、`--body-file` 必須・デフォルトテンプレートフォールバック禁止、Phase 5.5 への自動続行、Post-PR の本文同期更新 (`gh pr edit --body-file`)、Cleanup の followup 自動 issue 化 (重複チェック・ラベル推定・5 件以上で確認)、worktree 削除フォールバック (`-D`)、**プロジェクト固有の cleanup 後処理フック (プロジェクトの CLAUDE.md に「`/dev cleanup` 後の後処理」節があれば実行)**
 - **Phase 5.5 (CI + Codex レビュー対応ループ) を実行するとき / Phase 5 完了後に自動突入するとき / `/dev review` で再開するとき** → [references/phase-5.5-review-loop.md](references/phase-5.5-review-loop.md)
-  - **CI 監視 (`gh pr checks`) と CI FAIL 修正ラウンド**、Codex の挙動 (実 PR 観測で確定した事実表。1 パス 1〜2 件の検出、利用上限、同一 commit 再レビュー)、監視 state machine、`scripts/poll-codex-review.sh` の使い方、triage 分類 (成立確認 → fix/rebut/followup/reply-only)、修復記録と自律修正を止める条件、`scripts/local-codex-review.sh` による push 前ローカルレビュー、返信フロー、**baseline-diff による false-approve 防止**、**終端条件 (APPROVED / CONVERGED / REVIEW_INCOMPLETE)**、push 予算 (既定 3) とエスカレーションの 4 択、findings[] 台帳と計測。PR 本文同期と followups[] は Phase 5-bis / Phase 6 の仕組みを再利用
+  - **CI 監視 (`gh pr checks`) と CI FAIL 修正ラウンド**、Codex の挙動 (実 PR 観測で確定した事実表。1 パス 1〜2 件の検出、利用上限、同一 commit 再レビュー)、監視 state machine、`scripts/poll-codex-review.sh` の使い方、triage 分類 (成立確認 → fix/rebut/followup/reply-only)、修復記録と自律修正を止める条件、push 前ローカルレビュー (既定では掛けない)、返信フロー、**baseline-diff による false-approve 防止**、**終端条件 (APPROVED / CONVERGED / REVIEW_INCOMPLETE)**、push 予算 (既定 3) とエスカレーションの 4 択、findings[] 台帳と計測。PR 本文同期と followups[] は Phase 5-bis / Phase 6 の仕組みを再利用
 - **セッションファイルを書くとき / 中断・再開ロジックが必要なとき** → [references/session-management.md](references/session-management.md)
   - JSON スキーマ全フィールド、状態遷移 (`in-progress` → `pr-open` → `cleaned`)、整合性チェック、フェーズスキップ
 - **初回セットアップ / Phase 0 の警告に対処するとき** → [references/setup.md](references/setup.md)
@@ -152,7 +151,7 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 
 - **CI 判定は `gh pr checks` の bucket で行う**。`pass` / `skipping` 以外の bucket (`fail` / `pending` / `cancel`) が残っていれば CI 未達。checks が 1 つも無いリポジトリ (「no checks reported」エラー) は CI 条件を満たしたとみなす。`--watch` は前景 sleep がブロックされるため **`run_in_background` で起動する**
 - **終端は APPROVED / CONVERGED / REVIEW_INCOMPLETE のいずれかで、いずれも「最新 push に対する CI 全成功」を伴う**。APPROVED と CONVERGED は head レビューの確認も伴い、REVIEW_INCOMPLETE は head が未レビューであることを記録して報告する。👍 だけ、CI 緑だけで終了しない。逆に「👍 が付くまで push を続ける」もしない。head に対する最新レビューの P1/P2 が全て disposition 済みなら、👍 が無くても CONVERGED で終了する
-- **Codex は 1 パスに 1〜2 件しか指摘を出さなかった** (2026-03〜09 の 506 ラウンドで 1 件 74%、2 件 22%。2026-09-07 から「徹底的なコードレビュー」ON)。指摘を 1 件直して push するたびに次の 1〜2 件が出るので、**push 前に `scripts/local-codex-review.sh` を focus 付きで 1 パス掛け、修正とその影響先の P1/P2 を消化してから 1 回 push する**。ローカル 1 パスは週間利用枠の 0.5〜1% を消費し、クラウドのレビューと同じメーターに載るので、変更全体の再発見には使わない。1 行の機械的修正だけの push や返信だけのラウンドには掛けない。PR 作成前の全体レビューはリスクの高い変更 (並行制御 / 状態遷移 / 永続化 / schema / 認可、500 行超) に限る
+- **Codex は 1 パスに 1〜2 件しか指摘を出さなかった** (2026-03〜09 の 506 ラウンドで 1 件 74%、2 件 22%。2026-09-07 から「徹底的なコードレビュー」ON)。指摘を 1 件直して push するたびに次の 1〜2 件が出るので、同根の箇所をまとめて直し、修正とその影響先を検証してから 1 回 push する。**ローカルの Codex レビュー (`scripts/local-codex-review.sh`) は、PR 作成前も push 前も既定で掛けない**。2026-10-02 の実測では 1 パスで週間メーターがおよそ 1〜1.5 ポイント動き、クラウドのレビュー 1 回より大きかった。掛けた PR でもクラウドのラウンドは減らなかった。ユーザーが明示的に求めたときだけ掛ける
 - **指摘は問題の記述として読み、提案コードをそのまま貼らない**。成立を一次情報で確認してから fix にし、P1 と並行制御・状態遷移・永続化の P2 には修復記録 (失敗 / 不変条件 / 修復 / 証拠) を書く。同根の箇所は同じ commit で直す。12 ラウンド続いた PR は 13 件中 10 件が「提案どおり直した箇所への次の指摘」だった
 - **push 予算は 3 回 (`max_push_rounds`)。エスカレーションの中で上げない**。上限 5 ラウンドの時代に「続行」で 8 / 10 / 12 に上がった実績があるので、選択肢に「続行」を置かない
 - **返信だけのラウンドで `@codex review` を投げない**。同じ commit が再レビューされ、前のパスで出なかった指摘が出る (#1145 R5)。`@codex review` は push 後に自動レビューが来ないときの 1 PR 1 回のフォールバック
@@ -193,7 +192,7 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 # Phase 5: Open PR 作成 → セッションファイルに pr_url 記録
 #          → 計画 issue の「結果」節を記入 (クローズは PR の Closes / 部分消化ルールに従う)
 # Phase 5.5: CI (gh pr checks) と Codex レビューを監視し、
-#            CI FAIL の修正・レビュー指摘への対応 (push 前ローカルレビュー込み) を
+#            CI FAIL の修正・レビュー指摘への対応を
 #            CI 全成功 + レビュー収束まで、push 予算 3 回の中で自動で繰り返す
 #            → 完了報告 (受信レビュー数、push 回数、対応内訳、PR URL)。マージ後は /dev cleanup
 
