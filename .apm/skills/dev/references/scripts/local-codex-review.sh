@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# local-codex-review.sh — codex review CLI をプロンプトモードで呼び、BASE..HEAD の変更を
+# local-codex-review.sh — codex review CLI をプロンプトモードで呼び、BASE から作業ツリーまでの変更 (未コミットの fix を含む) を
 # AGENTS.md の Code review 基準で網羅的にレビューする。
 # /dev Phase 5 (PR 作成前) と Phase 5.5 (push 前) のローカルレビューに使う。
 #
@@ -16,7 +16,7 @@
 #
 # 使い方:
 #   local-codex-review.sh <worktree_path> <base_ref> [options]
-#     base_ref : 比較元 (origin/main など)。merge-base を取って BASE..HEAD をレビューする
+#     base_ref : 比較元 (origin/main など)。merge-base を取り、そこから作業ツリーまでをレビューする
 #   options:
 #     --focus "<観点>"   直前の fix で変えた振る舞いや影響先など、重点的に見る観点 (2 パス目で使う)
 #     --timeout <sec>    既定 900
@@ -58,14 +58,15 @@ command -v codex >/dev/null 2>&1 || { echo "codex CLI not found" >&2; exit 3; }
 cd "$WT"
 BASE_SHA=$(git merge-base "$BASE_REF" HEAD) || { echo "merge-base failed for $BASE_REF" >&2; exit 3; }
 HEAD_SHA=$(git rev-parse HEAD)
-if git diff --quiet "$BASE_SHA" HEAD; then
-  echo "no changes between $BASE_SHA and HEAD" >&2
+# push 前の fix はコミット前に掛けるので、HEAD ではなく作業ツリー (未追跡ファイルを含む) と比べる
+if git diff --quiet "$BASE_SHA" && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  echo "no changes between $BASE_SHA and the working tree" >&2
   exit 4
 fi
 
 [ -n "$LOG" ] || LOG=$(mktemp -t local-codex-review.XXXXXX)
 
-PROMPT="Review the changes introduced between commit $BASE_SHA and HEAD ($HEAD_SHA). Run: git diff $BASE_SHA..HEAD to see the full change set, and read the surrounding code and callers as needed.
+PROMPT="Review the changes between commit $BASE_SHA and the current working tree (HEAD is $HEAD_SHA; uncommitted changes are part of the change set). Run: git diff $BASE_SHA and git status --short (for new untracked files) to see the full change set, and read the surrounding code and callers as needed.
 Apply the 'Code review' / 'Code Review Rules' section of AGENTS.md (root and nested) as the review criteria.
 Be exhaustive: keep searching until you find no new P1 or P2 findings. When you find one instance of a defect pattern, inspect every other occurrence and affected consumer in the change set and report them together.
 Verify findings against real behavior where it matters (run only the tests related to the changed files, reproduce with real data or the real database); do not run the whole test suite.
@@ -96,5 +97,12 @@ fi
 # 最後のマーカー以降だけを取り出し、同じ最終メッセージが続けて 2 回出力される場合 (0.153 で観測) は
 # 先頭行が再び現れた位置で打ち切って 1 回分にする
 [ "$NOTE" -eq 1 ] && echo "[local codex review] base=$BASE_SHA head=$HEAD_SHA log=$LOG"
-awk '/^codex$/{buf=""; p=1; next} p{buf=buf $0 "\n"} END{printf "%s", buf}' "$LOG" \
-  | awk 'NR==1{first=$0} NR>1 && $0==first && first!="" {exit} {print}'
+# マーカーが無い、または最終メッセージが空なら、出力形式が変わったとみなして実行エラーにする
+# (空の stdout で exit 0 すると、呼び出し側が「指摘なし」と読み違える)
+FINAL=$(awk '/^codex$/{buf=""; p=1; next} p{buf=buf $0 "\n"} END{printf "%s", buf}' "$LOG" \
+  | awk 'NR==1{first=$0} NR>1 && $0==first && first!="" {exit} {print}')
+if [ -z "$(printf '%s' "$FINAL" | tr -d '[:space:]')" ]; then
+  echo "no final review message found in codex output (log: $LOG)" >&2
+  exit 3
+fi
+printf '%s\n' "$FINAL"

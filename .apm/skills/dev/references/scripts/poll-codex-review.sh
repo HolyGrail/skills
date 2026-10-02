@@ -72,14 +72,20 @@ done
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# gh api の失敗を空の結果と見なさず、終了コード 3 で止める (空と見なすと利用上限や approved を取りこぼして waiting になる)。
+# watch ループの result=$(check) の中では errexit が効かないので、呼び出し側は「|| exit 3」で明示的に伝える
+api() {
+  gh api "$1" --paginate 2>/dev/null || { printf '{"error":"gh api failed: %s"}\n' "$1" >&2; exit 3; }
+}
+
 # 1 ショット判定。stdout に 1 行 JSON を出す。
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review review_ids has_review new_comments signal
 
-  reactions=$(gh api "repos/$REPO/issues/$PR/reactions" --paginate 2>/dev/null || echo '[]')
-  reviews=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate 2>/dev/null || echo '[]')
-  issue_comments=$(gh api "repos/$REPO/issues/$PR/comments" --paginate 2>/dev/null || echo '[]')
+  reactions=$(api "repos/$REPO/issues/$PR/reactions") || exit 3
+  reviews=$(api "repos/$REPO/pulls/$PR/reviews") || exit 3
+  issue_comments=$(api "repos/$REPO/issues/$PR/comments") || exit 3
 
   # last_push 以降の codex +1 (approved シグナル)
   reaction_at=$(printf '%s' "$reactions" | jq -r --arg bot "$BOT" --arg base "$BASE" \
@@ -120,7 +126,7 @@ check() {
   # baseline 上に未処理 review が 2 件以上あるとき古い方を取りこぼすため全件返す)
   new_comments='[]'
   if [ "$has_review" = "true" ]; then
-    comments=$(gh api "repos/$REPO/pulls/$PR/comments" --paginate 2>/dev/null || echo '[]')
+    comments=$(api "repos/$REPO/pulls/$PR/comments") || exit 3
     new_comments=$(printf '%s' "$comments" | jq -c --arg bot "$BOT" --argjson rids "$review_ids" \
       '[.[] | select(.user.login==$bot and (.pull_request_review_id as $r | ($rids | index($r)) != null))
             | {id, pull_request_review_id, in_reply_to_id, path, line,
@@ -158,7 +164,7 @@ fi
 # run_in_background な Bash で起動すること (この while ループごと background プロセスになる)。
 deadline=$(( $(date +%s) + MAX_WAIT ))
 while :; do
-  result=$(check)
+  result=$(check) || exit 3
   sig=$(printf '%s' "$result" | jq -r '.signal')
   if [ "$sig" != "waiting" ]; then printf '%s\n' "$result"; exit 0; fi
   remaining=$(( deadline - $(date +%s) ))

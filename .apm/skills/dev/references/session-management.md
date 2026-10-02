@@ -64,6 +64,7 @@
     "codex_review_requested": false,
     "last_push_at": "2026-04-18T09:10:00Z",
     "last_push_commit": "dd02a0b1c2d3e4f5",
+    "last_review_commit": "dd02a0b1c2d3e4f5",
     "processed_review_ids": [4385874078, 4390706057],
     "processed_comment_ids": [3321551294, 3325242373],
     "rebutted_comment_ids": [],
@@ -108,6 +109,7 @@
   - `local_review_passes` / `head_local_review`: Phase 5 と 5.5 で掛けたローカル Codex レビューのパス数と、head がローカルレビューを通っているか (`clean` / `unreviewed` / `skipped` / `cloud-first` = 条件に当たらず掛けなかった)
   - `codex_review_requested`: この PR で `@codex review` を投げたか (1 PR 1 回)
   - `last_push_at` / `last_push_commit`: **baseline-diff の基準**。これより新しい Codex イベントだけをシグナルとみなす (false-approve 防止)
+  - `last_review_commit`: 最後に処理した Codex review の `commit_id`。push しないラウンドで baseline を進めた後も、head がレビュー済みかを判定するのに使う
   - `processed_review_ids` / `processed_comment_ids`: 対応済み review / comment の id (再 triage 防止)
   - `rebutted_comment_ids`: 反論済み comment の id (Codex が再提起しても新規扱いしない)
   - `findings[]`: 指摘の台帳。`severity` (P1/P2/P3)、`validity` (`valid` / `excessive` / `wrong`)、`disposition` (`fixed` / `rebutted` / `followup` / `reply-only` / `accepted-risk` / `pending`)、`evidence` (成立確認と検証の要約)、`repair` (修復記録。P1 と並行制御・状態遷移・永続化の P2)、`sha` / `issue_url`。CONVERGED 判定とエスカレーションの一覧表、および事後の集計に使う

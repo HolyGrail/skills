@@ -28,7 +28,7 @@ Phase 5 に進む前に、以下を満たす:
 
 1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
 2. 変更内容を分析してコミットメッセージを作成し、ローカルにコミットする (push はまだしない)
-3. **PR 作成前ローカルレビュー (条件付き)** (詳細は次節「PR 作成前ローカルレビュー」): 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超えるときだけ、`scripts/local-codex-review.sh` で変更全体を AGENTS.md の基準でレビューし、P1/P2 を直してから push する。それ以外は掛けずに PR を開き、最初の広い発見は「徹底的なコードレビュー」を ON にしたクラウドのレビュー (2026-09-07 以降) に任せる。ローカルの 1 パスは週間利用枠の 0.5〜1% を消費し、クラウドのレビューと同じメーターに載る (2026-09-07 実測)。セッションに `review` オブジェクトがまだ無ければ、この手順で [session-management.md](session-management.md#スキーマ) の初期値 (`loop_status: null`、`push_rounds: 0`、`findings: []` など) で作り、`local_review_passes` と `head_local_review` (掛けなかったときは `"cloud-first"`) をここに書く
+3. **PR 作成前ローカルレビュー (条件付き)** (詳細は次節「PR 作成前ローカルレビュー」): 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超えるときだけ、`scripts/local-codex-review.sh` で変更全体を AGENTS.md の基準でレビューし、P1/P2 を直してから push する。それ以外は掛けずに PR を開き、最初の広い発見は「徹底的なコードレビュー」を ON にしたクラウドのレビュー (2026-09-07 以降) に任せる。ローカルの 1 パスは週間利用枠の 0.5〜1% を消費し、クラウドのレビューと同じメーターに載る (2026-09-07 実測)。セッションに `review` オブジェクトがまだ無ければ、この手順で [session-management.md](session-management.md#スキーマ) の初期値 (`loop_status: null`、`push_rounds: 0`、`findings: []` など) で作り、`local_review_passes` と `head_local_review` (掛けなかったときは `"cloud-first"`) をここに書く。レビューの指摘で直した分は手順 4 の前にコミットし、`git -C "$WT_PATH" status --porcelain` が空であることを確かめる
 4. プッシュ: `cd "$WT_PATH" && git push -u origin "$BRANCH"`
 5. **Test plan 構築**: 計画 issue の「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は「Test plan 構築ルール」)
 6. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は「PR body テンプレート」と「PR 作成コマンド」)。本文には「レビュアー向けの前提」節を含める (意図、不変条件、意図的に対応しないこと、環境制約、ローカルレビューの結果):
@@ -521,7 +521,7 @@ git -C "$REPO_ROOT" wt -d "$BRANCH"
 
 - **ベストエフォート**。失敗しても cleanup は完了扱いにし、手順 8 のレポートに結果 (成功 / skip の理由 / 失敗の理由) を 1 行残す。ロールバックはしない
 - **作業ディレクトリは `$REPO_ROOT`**。worktree は手順 5 で削除済みで、対象はマージ後の default ブランチであってタスクブランチではない
-- **`$REPO_ROOT` の作業ツリーを勝手に動かさない**。最新化は「default ブランチ上」かつ「`git status --porcelain` が空」かつ「fast-forward できる」の 3 条件が揃ったときだけ行い、コマンドは `git pull --ff-only` を使う。1 つでも欠けたら最新化を skip して警告する (ユーザーが default ブランチ側で別の作業をしている可能性がある。porcelain が空でも未 push のコミットがあれば、素の `git pull` は設定次第でマージコミットや rebase を作る)
+- **`$REPO_ROOT` の作業ツリーを勝手に動かさない**。最新化は「default ブランチ上」かつ「`git status --porcelain` が空」かつ「fast-forward できる」の 3 条件が揃ったときだけ行い、コマンドは `git pull --ff-only` を使う。1 つでも欠けたら最新化を skip して警告し、**後処理そのものも skip する** (後処理はマージ後のコードを前提にするので、別ブランチや古いチェックアウトで走らせると違う版を反映しうる)。ユーザーが default ブランチ側で別の作業をしている可能性があるので、作業ツリーは動かさない。porcelain が空でも未 push のコミットがあれば、素の `git pull` は設定次第でマージコミットや rebase を作る
 - **外部デバイス・外部環境への依存は実行時に検出する**。接続されていなければ skip として報告し、エラー扱いにしない
 - 数分かかる処理になりうるため、開始時に何をしているかナレーションで宣言する
 
