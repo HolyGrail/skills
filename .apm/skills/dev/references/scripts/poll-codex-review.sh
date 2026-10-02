@@ -36,9 +36,10 @@
 #     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
 #     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
-#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の反応 (head への review / +1 /「Didn't find」)
-#                                            # 以降 (同じ秒を含む) の利用上限コメントの時刻 (上限がまだ戻っていない)。
-#                                            # 前の head への遅れた review は上限前に依頼されたものなので、戻った証拠にしない
+#     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の反応 (+1 /「Didn't find」/ 上限コメント時点の
+#                                            # head かそれより新しい commit への review) 以降 (同じ秒を含む) の利用上限コメントの
+#                                            # 時刻 (上限がまだ戻っていない)。上限より前の commit への遅れた review は、上限前に
+#                                            # 依頼されたものなので、戻った証拠にしない
 #     "head_sha": "<sha>",                   # PR の現在の head
 #     "head_review": {id, commit_id, submitted_at} | null,  # head を対象とする最新の codex review (処理済みを含む)。
 #                                            # null でなければ head はレビュー済み
@@ -104,7 +105,7 @@ api() {
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review review_ids has_review new_comments signal
-  local last_activity_at usage_limit_active_at pr head_sha head_review
+  local last_activity_at usage_limit_active_at pr head_sha head_review last_limit_at commits recovery_review_at
 
   pr=$(api "repos/$REPO/pulls/$PR") || exit 3
   head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
@@ -138,20 +139,31 @@ check() {
   head_review=$(printf '%s' "$reviews" | jq -c --arg head "$head_sha" \
     '[.[] | select(.commit_id==$head)] | max_by(.submitted_at) | if . == null then null else {id, commit_id, submitted_at} end')
 
-  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (head への review / +1 /「Didn't find」) 以降に
-  # 利用上限コメントがあれば、上限はまだ戻っていない。前の head への review は上限より前に依頼されて遅れて届いたもの
-  # なので数えない。GitHub の時刻は秒単位で、上限を使い切ったレビューと上限コメントは同じ秒になりうるので、
-  # 同じ秒は上限が残っている側に倒す (外れても待機上限での分類が変わるだけ)
-  last_activity_at=$( { printf '%s' "$head_review" | jq -r '.submitted_at // ""'
-                        printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
-                          '[.[] | select(.user.login==$bot and .content=="+1") | .created_at] | max // ""'
-                        printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
-                          '[.[] | select(.user.login==$bot and (.body | test("Didn'"'"'t find any major issues"; "i")))
-                           | .created_at] | max // ""'; } | sort | tail -n 1)
-  usage_limit_active_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg after "$last_activity_at" \
-    '[.[] | select(.user.login==$bot and .created_at >= $after
-                   and (.body | test("reached your Codex usage limits"; "i")))]
+  # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) 以降に利用上限コメントが
+  # あれば、上限はまだ戻っていない。review は、上限コメントの時点の head (その時刻までにコミットされた最新の commit) か
+  # それより新しい commit へのものだけを数える。それより前の commit への review は上限より前に依頼されて遅れて届いたもので、
+  # 上限が戻った証拠にならない (head で絞ると、上限が戻った後のレビューが次の push で数えられなくなる)。
+  # GitHub の時刻は秒単位で、上限を使い切ったレビューと上限コメントは同じ秒になりうるので、同じ秒は上限が残っている側に
+  # 倒す (外れても待機上限での分類が変わるだけ)。commits は上限コメントがあるときだけ取る
+  last_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+    '[.[] | select(.user.login==$bot and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
+  usage_limit_active_at=""
+  if [ -n "$last_limit_at" ]; then
+    commits=$(api "repos/$REPO/pulls/$PR/commits") || exit 3
+    recovery_review_at=$(jq -rn --argjson reviews "$reviews" --argjson commits "$commits" --arg limit "$last_limit_at" \
+      '($commits | map(.sha)) as $order
+       | ([$commits | to_entries[] | select(.value.commit.committer.date <= $limit) | .key] | max // 0) as $at_limit
+       | [$reviews[] | (.commit_id as $c | $order | index($c)) as $i
+          | select($i != null and $i >= $at_limit) | .submitted_at] | max // ""')
+    last_activity_at=$( { printf '%s\n' "$recovery_review_at"
+                          printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
+                            '[.[] | select(.user.login==$bot and .content=="+1") | .created_at] | max // ""'
+                          printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+                            '[.[] | select(.user.login==$bot and (.body | test("Didn'"'"'t find any major issues"; "i")))
+                             | .created_at] | max // ""'; } | sort | tail -n 1)
+    [[ "$last_limit_at" < "$last_activity_at" ]] || usage_limit_active_at="$last_limit_at"
+  fi
 
   # codex の 👀 が今あるか (補助。終端判定には使わない)
   eyes=$(printf '%s' "$reactions" | jq --arg bot "$BOT" \

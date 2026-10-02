@@ -83,7 +83,7 @@ SKILL.md 本体から「Phase 5 完了後に自動突入するとき」「`/dev 
 
 ### セッション復元
 
-`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。旧セッションの `last_review_commit` は使わない (head がレビュー済みかはポーリングの `head_review` で判定する)。`last_push_commit` があれば、`last_push_at` は再開のたびにそのコミット時刻から取り直す ([手順 7](#7-commit--push--返信--pr-本文) の `NEW_PUSH_AT` と同じ式。旧手順は push しないラウンドで `last_push_at` を review の時刻まで進めていたので、そのままだと今の head への 👍 が返らないことがある)。`wait_started_at` が無ければ再開した時刻で補う (旧セッションの `last_push_at` はコミット時刻で、push より前になりうる。再開時刻なら待機を短く見積もるだけで、レビューの来る前に終わらせることはない)。
+`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。旧セッションの `last_review_commit` は使わない (head がレビュー済みかはポーリングの `head_review` で判定する)。`last_push_at` が `wait_started_at` より後なら、`wait_started_at` に戻す。旧手順は push しないラウンドで `last_push_at` を review の時刻まで進めていたので、そのままだと今の head への 👍 が返らないことがある。戻す先は実際の push 時刻なので、それより後の 👍 は今の head へのものである (コミット時刻まで戻すと、コミットから push までの間に付いた前の head への 👍 を拾う)。`wait_started_at` が無ければ再開した時刻で補う (旧セッションの `last_push_at` はコミット時刻で、push より前になりうる。再開時刻なら待機を短く見積もるだけで、レビューの来る前に終わらせることはない)。
 
 ---
 
@@ -292,7 +292,7 @@ PROCESSED=$(jq -r '.review.processed_review_ids | join(",")' "$SESSION_FILE")
 - `gh api` が失敗すると、結果を空とは見なさず終了コード 3 で終わる (空と見なすと、利用上限や approved を取りこぼして `waiting` になる)。終了コード 3 は `waiting` として扱わず、時間をおいて 1 回だけ再実行し、それでも失敗したら認証やレート制限を確かめて報告する
 - `approved_at` は 👍 reaction と「Didn't find any major issues」コメントのうち新しい方。`latest_review` は未処理の最新 review。
 - `head_sha` はスクリプトが `pulls/{n}` から取った PR の head。`head_review` は head を対象とする最新の review で、処理済みも含む。**`head_review` が null でなければ head はレビュー済み**。前の head への遅れた review を後から処理しても、この判定は変わらない
-- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (head への review / 👍 /「Didn't find」) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。前の head への review は上限より前に依頼されて遅れて届いたものなので、上限が戻った証拠に数えない
+- `usage_limit_active_at` は baseline によらず、Codex の最後の反応 (👍 /「Didn't find」/ 上限コメント時点の head かそれより新しい commit への review) 以降 (同じ秒を含む) の利用上限コメントの時刻を返す。レビューの後に上限が付き、その対応の push で baseline が越えても、上限が戻っていないことをここで判定できる。上限コメントより前の commit への review は、上限の前に依頼されて遅れて届いたものなので、上限が戻った証拠に数えない。上限コメントの時点の head は、PR の commits のうちその時刻までにコミットされた最新のもの (上限コメントがあるときだけ `pulls/{n}/commits` を取る)
 
 
 ### ScheduleWakeup フォールバック
