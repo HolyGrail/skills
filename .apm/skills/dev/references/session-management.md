@@ -113,6 +113,7 @@
   - `last_push_at` / `last_push_commit`: 最後の push のコミット時刻 (UTC の Z 形式) と sha。`last_push_at` は **baseline-diff の基準**で、これより新しい 👍 とコメントだけをシグナルとみなす (false-approve 防止)。**push のときだけ動かす** ([phase-5.5-review-loop.md 手順 8](phase-5.5-review-loop.md#8-台帳と-baseline-の更新))
   - `wait_started_at`: 最後に実際に push した時刻 (コミット時刻ではない)。待機時間 (`total_wait_seconds`) と、relay モードの時間切れ用タイマーが古いかどうかの基準
   - `processed_review_ids` / `processed_comment_ids`: 対応済み review / comment の id (再 triage 防止)。`processed_review_ids` は `poll-codex-review.sh --processed-reviews` に渡し、ポーリングが返す review から除く
+  - `usage_limit`: `{at, head}`。最新の利用上限コメントの時刻と、上限が付いた時点の PR の head (既定 `null`)。`head` は `poll-codex-review.sh --limit-head` に渡し、上限の前に依頼されて遅れて届いた review を、上限が戻った証拠から外す。ポーリングのたびに、`usage_limit_latest_at` が `at` と違えば更新する。`prev_push_commit` は 1 つ前の push の sha で、上限コメントが `last_push_at` (最後の push のコミット時刻) より前のときの head に使う ([phase-5.5-review-loop.md](phase-5.5-review-loop.md#使い方))
   - 旧セッションの `last_review_commit` は使わない (head がレビュー済みかはポーリングの `head_review` で判定する)
   - `rebutted_comment_ids`: 反論済み comment の id (Codex が再提起しても新規扱いしない)
   - `findings[]`: 指摘の台帳。`severity` (triage 後の重大度 P1/P2/P3。振る舞いに影響しない P2 を reply-only にしたら P3 にし、元のバッジは `evidence` に書く)、`validity` (`valid` / `excessive` / `wrong`)、`disposition` (`fixed` / `rebutted` / `followup` / `reply-only` / `accepted-risk` / `pending`)、`evidence` (成立確認と検証の要約)、`repair` (修復記録。P1 と並行制御・状態遷移・永続化の P2)、`sha` / `issue_url`。CONVERGED 判定とエスカレーションの一覧表、および事後の集計に使う
