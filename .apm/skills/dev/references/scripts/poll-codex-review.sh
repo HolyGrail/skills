@@ -25,9 +25,9 @@
 #   options:
 #     --processed-reviews <id,...>  処理済みの codex review の id (カンマ区切り。空でもよい)。
 #                        セッションの review.processed_review_ids を渡す。これに無い review が未処理。
-#     --limit-head <sha> 利用上限を観測した時点の PR の head。セッションの review.usage_limit_head を渡す (無ければ省く)。
-#                        上限コメントより後に届いた review のうち、この commit の祖先 (上限の前の head) を対象とするものを
-#                        「上限が戻った」証拠に数えない (上限の前に依頼されて遅れて届いた review を除く)
+#     --limit-head <sha> 利用上限が付いた時点の PR の head。セッションの review.usage_limit.head を渡す (無ければ省く)。
+#                        上限コメントより後に届いた review は、この commit の後に push された commit を対象とするものだけを
+#                        「上限が戻った」証拠に数える (上限の前に依頼されて遅れて届いた review と、limit-head 自身への review を除く)
 #     --watch            内部で短間隔ポーリング (変化検知 or タイムアウトで exit)。
 #                        ※ run_in_background な Bash で起動すること (前景 sleep は環境で禁止)。
 #     --interval <sec>   ポーリング間隔 (default 30)
@@ -39,10 +39,12 @@
 #     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
 #     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
 #     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
+#     "usage_limit_latest_at": "<ISO|null>", # baseline にも上限が戻ったかにもよらない、最新の利用上限コメントの時刻。
+#                                            # セッションが review.usage_limit を記録する契機
 #     "usage_limit_active_at": "<ISO|null>", # baseline によらず、codex の最後の review / +1 /「Didn't find」以降 (同じ秒を含む) の
 #                                            # 利用上限コメントの時刻 (上限がまだ戻っていない)。push で baseline が
 #                                            # 利用上限コメントを越えても、待機上限での分類に使える。上限の後の review は
-#                                            # --limit-head の祖先を対象とするものを数えない
+#                                            # --limit-head の後に push された commit を対象とするものだけを数える
 #     "head_sha": "<sha>",                   # PR の現在の head
 #     "head_review": {id, commit_id, submitted_at} | null,  # head を対象とする最新の codex review (処理済みを含む)。
 #                                            # null でなければ head はレビュー済み
@@ -53,7 +55,7 @@
 #     "checked_at": "<ISO>"
 #   }
 # signal 優先順位: new_review > approved > usage_limited > waiting。usage_limited は baseline 以降の上限コメントが
-# まだ有効 (usage_limit_active_at が baseline より新しい) なときだけ (上限の後に届いた review を処理した後は返さない)。未処理の review が 1 件でもあれば、approved との時刻に
+# まだ有効 (usage_limit_active_at が baseline より新しい) で、head が未レビュー (head_review が null) なときだけ。未処理の review が 1 件でもあれば、approved との時刻に
 # よらず new_review (review を triage してから終端へ進む。baseline は push 以外で動かないので、approved は review を処理済みに
 # した後のポーリングで返る)。
 # 終了コード: 0 = 正常 (signal は JSON 参照)、2 = 引数エラー、3 = gh/jq 実行エラー。
@@ -107,12 +109,24 @@ api() {
   printf '%s' "$out" | jq -cs 'add // []'
 }
 
+# compare の status (ahead / behind / identical / diverged) を出す。404 / 422 (force push で消えた commit や、
+# 共通の祖先が無い) は空を出す。それ以外の失敗は、空と見なすと上限の判定を誤るので api() と同じく終了コード 3
+# (呼び出し側は $(...) の中なので「|| exit 3」で伝える)
+compare_status() {
+  local out
+  if out=$(gh api "repos/$REPO/compare/$1...$2" --jq '.status' 2>&1); then printf '%s' "$out"; return 0; fi
+  case "$out" in
+    *"HTTP 404"*|*"HTTP 422"*) return 0 ;;
+    *) printf '{"error":"gh api failed: repos/%s/compare/%s...%s"}\n' "$REPO" "$1" "$2" >&2; exit 3 ;;
+  esac
+}
+
 # 1 ショット判定。stdout に 1 行 JSON を出す。
 check() {
   local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
   local fresh_reviews latest_review review_ids has_review new_comments signal
   local last_activity_at usage_limit_active_at pr head_sha head_review
-  local latest_limit_at activity_reviews late_commits post_limit_commits c status
+  local latest_limit_at activity_reviews late_commits post_limit_commits c st
 
   pr=$(api "repos/$REPO/pulls/$PR") || exit 3
   head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
@@ -149,35 +163,34 @@ check() {
   # baseline によらない、上限に達したままかの判定。codex の最後の反応 (review / +1 /「Didn't find」) 以降に
   # 利用上限コメントがあれば、上限はまだ戻っていない。GitHub の時刻は秒単位で、上限を使い切ったレビューと
   # 上限コメントは同じ秒になりうるので、同じ秒は上限が残っている側に倒す (外れても待機上限での分類が変わるだけ)。
-  # 上限の前に依頼されて遅れて届いた前の head への review を「戻った」と数えないよう、--limit-head があれば、
-  # 最新の上限コメントより後の review のうち、limit-head の祖先 (compare の behind) を対象とするものを数えない。
-  # limit-head 自身 (identical)、その後の push (ahead)、rebase 後 (diverged) への review は上限が戻った証拠になる。
+  # 上限の前に依頼されて遅れて届いた review を「戻った」と数えないよう、--limit-head があれば、最新の上限コメント
+  # より後の review は、limit-head の後に push された commit を対象とするものだけを数える:
+  #   - ahead (limit-head の子孫): 数える
+  #   - diverged (rebase など): 今の head から辿れる commit (上限の後の rebase) だけ数える。辿れないものは、
+  #     上限の前に rebase で捨てられた head への遅れた review でありうる
+  #   - identical (limit-head 自身): 数えない。上限の前に依頼されて待っていた review でありうる (同じ commit への
+  #     @codex review が上限に当たり、元の review が後から届く)。head がレビュー済みなら usage_limited は返さない
+  #   - behind (limit-head の祖先): 数えない
   # 上限コメント以前の review は判定に影響しないので、compare はそれより後の review の commit だけに掛ける
+  latest_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
+    '[.[] | select(.user.login==$bot and (.body | test("reached your Codex usage limits"; "i")))
+     | .created_at] | max // ""')
   activity_reviews="$reviews"
-  if [ -n "$LIMIT_HEAD" ]; then
-    latest_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" \
-      '[.[] | select(.user.login==$bot and (.body | test("reached your Codex usage limits"; "i")))
-       | .created_at] | max // ""')
-    if [ -n "$latest_limit_at" ]; then
-      late_commits=$(printf '%s' "$reviews" | jq -r --arg l "$latest_limit_at" \
-        '[.[] | select(.submitted_at > $l) | .commit_id] | unique | .[]')
-      post_limit_commits='[]'
-      for c in $late_commits; do
-        # 404 / 422 (force push で消えた commit や、共通の祖先が無い) は数えない。それ以外の失敗は、
-        # 空と見なすと上限が残っていると誤って usage_limited を返しうるので、api() と同じく終了コード 3 で止める
-        if ! status=$(gh api "repos/$REPO/compare/$LIMIT_HEAD...$c" --jq '.status' 2>&1); then
-          case "$status" in
-            *"HTTP 404"*|*"HTTP 422"*) status="" ;;
-            *) printf '{"error":"gh api failed: repos/%s/compare/%s...%s"}\n' "$REPO" "$LIMIT_HEAD" "$c" >&2; exit 3 ;;
-          esac
-        fi
-        case "$status" in
-          ahead|identical|diverged) post_limit_commits=$(printf '%s' "$post_limit_commits" | jq -c --arg c "$c" '. + [$c]') ;;
-        esac
-      done
-      activity_reviews=$(printf '%s' "$reviews" | jq -c --arg l "$latest_limit_at" --argjson ok "$post_limit_commits" \
-        '[.[] | select(.submitted_at <= $l or (.commit_id as $c | $ok | index($c)) != null)]')
-    fi
+  if [ -n "$LIMIT_HEAD" ] && [ -n "$latest_limit_at" ]; then
+    late_commits=$(printf '%s' "$reviews" | jq -r --arg l "$latest_limit_at" \
+      '[.[] | select(.submitted_at > $l) | .commit_id] | unique | .[]')
+    post_limit_commits='[]'
+    for c in $late_commits; do
+      st=$(compare_status "$LIMIT_HEAD" "$c") || exit 3
+      if [ "$st" = "diverged" ]; then
+        st=$(compare_status "$c" "$head_sha") || exit 3
+        case "$st" in ahead|identical) st="ahead" ;; esac
+      fi
+      [ "$st" = "ahead" ] || continue
+      post_limit_commits=$(printf '%s' "$post_limit_commits" | jq -c --arg c "$c" '. + [$c]')
+    done
+    activity_reviews=$(printf '%s' "$reviews" | jq -c --arg l "$latest_limit_at" --argjson ok "$post_limit_commits" \
+      '[.[] | select(.submitted_at <= $l or (.commit_id as $c | $ok | index($c)) != null)]')
   fi
   last_activity_at=$( { printf '%s' "$activity_reviews" | jq -r 'map(.submitted_at) | max // ""'
                         printf '%s' "$reactions" | jq -r --arg bot "$BOT" \
@@ -222,7 +235,8 @@ check() {
   # 新しい限り返り続けるので、review を処理済みにした後のポーリングで返る
   if [ "$has_review" = "true" ];   then signal="new_review"
   elif [ -n "$approved_at" ];      then signal="approved"
-  elif [ -n "$usage_limit_active_at" ] && [[ "$BASE" < "$usage_limit_active_at" ]]; then signal="usage_limited"
+  elif [ -n "$usage_limit_active_at" ] && [[ "$BASE" < "$usage_limit_active_at" ]] \
+       && [ "${head_review:-null}" = "null" ]; then signal="usage_limited"
   else                                  signal="waiting"; fi
 
   jq -cn \
@@ -230,6 +244,7 @@ check() {
     --arg approved_at "$approved_at" \
     --arg usage_limit_at "$usage_limit_at" \
     --arg usage_limit_active_at "$usage_limit_active_at" \
+    --arg usage_limit_latest_at "$latest_limit_at" \
     --arg head_sha "$head_sha" \
     --argjson head_review "${head_review:-null}" \
     --argjson latest_review "${latest_review:-null}" \
@@ -240,6 +255,7 @@ check() {
       approved_at: (if $approved_at=="" then null else $approved_at end),
       usage_limit_at: (if $usage_limit_at=="" then null else $usage_limit_at end),
       usage_limit_active_at: (if $usage_limit_active_at=="" then null else $usage_limit_active_at end),
+      usage_limit_latest_at: (if $usage_limit_latest_at=="" then null else $usage_limit_latest_at end),
       head_sha: $head_sha,
       head_review: $head_review,
       latest_review: $latest_review,
