@@ -64,7 +64,6 @@
     "codex_review_requested": false,
     "last_push_at": "2026-04-18T09:10:00Z",
     "last_push_commit": "dd02a0b1c2d3e4f5",
-    "last_review_commit": "dd02a0b1c2d3e4f5",
     "wait_started_at": "2026-05-30T01:00:00Z",
     "processed_review_ids": [4385874078, 4390706057],
     "processed_comment_ids": [3321551294, 3325242373],
@@ -109,10 +108,10 @@
   - `ci_fix_rounds`: CI FAIL を修正 push した回数 (運用メトリクス。CI 状態自体は `gh pr checks` で常に最新を取得するため永続化しない)
   - `local_review_passes` / `head_local_review`: Phase 5 と 5.5 で掛けたローカル Codex レビューのパス数と、head がローカルレビューを通っているか (`clean` / `unreviewed` / `skipped` / `cloud-first` = 条件に当たらず掛けなかった / `cloud-reviewed` = `unreviewed` だった head を Codex がレビューした)
   - `codex_review_requested`: この PR で `@codex review` を投げたか (1 PR 1 回)
-  - `last_push_at` / `last_push_commit`: **baseline-diff の基準**。これより新しい Codex イベントだけをシグナルとみなす (false-approve 防止)
-  - `last_review_commit`: 最後に処理した Codex review の `commit_id`。push しないラウンドで baseline を進めた後も、head がレビュー済みかを判定するのに使う
-  - `wait_started_at`: 最後に実際に push した時刻 (コミット時刻ではない)。push しないラウンドで `last_push_at` を進めても動かさない。待機時間 (`total_wait_seconds`) と、relay モードの時間切れ用タイマーが古いかどうかの基準
-  - `processed_review_ids` / `processed_comment_ids`: 対応済み review / comment の id (再 triage 防止)
+  - `last_push_at` / `last_push_commit`: 最後の push のコミット時刻 (UTC の Z 形式) と sha。`last_push_at` は **baseline-diff の基準**で、これより新しい 👍 とコメントだけをシグナルとみなす (false-approve 防止)。**push のときだけ動かす** ([phase-5.5-review-loop.md 手順 8](phase-5.5-review-loop.md#8-台帳と-baseline-の更新))
+  - `wait_started_at`: 最後に実際に push した時刻 (コミット時刻ではない)。待機時間 (`total_wait_seconds`) と、relay モードの時間切れ用タイマーが古いかどうかの基準
+  - `processed_review_ids` / `processed_comment_ids`: 対応済み review / comment の id (再 triage 防止)。`processed_review_ids` は `poll-codex-review.sh --processed-reviews` に渡し、ポーリングが返す review から除く
+  - 旧セッションの `last_review_commit` は使わない (head がレビュー済みかはポーリングの `head_review` で判定する)
   - `rebutted_comment_ids`: 反論済み comment の id (Codex が再提起しても新規扱いしない)
   - `findings[]`: 指摘の台帳。`severity` (triage 後の重大度 P1/P2/P3。振る舞いに影響しない P2 を reply-only にしたら P3 にし、元のバッジは `evidence` に書く)、`validity` (`valid` / `excessive` / `wrong`)、`disposition` (`fixed` / `rebutted` / `followup` / `reply-only` / `accepted-risk` / `pending`)、`evidence` (成立確認と検証の要約)、`repair` (修復記録。P1 と並行制御・状態遷移・永続化の P2)、`sha` / `issue_url`。CONVERGED 判定とエスカレーションの一覧表、および事後の集計に使う
   - `total_wait_seconds` / `escalate_after_seconds`: 累積待機秒とエスカレーション閾値 (既定 2400 = 40 分)
