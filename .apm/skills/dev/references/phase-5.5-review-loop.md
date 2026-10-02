@@ -83,7 +83,7 @@ SKILL.md 本体から「Phase 5 完了後に自動突入するとき」「`/dev 
 
 ### セッション復元
 
-`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。`last_review_commit` が無く `processed_review_ids` があるときは、最後の id の review を `gh api repos/{owner}/{repo}/pulls/{n}/reviews/{id} --jq .commit_id` で引いて補う (null のままだと、push しないラウンドの後で再開したセッションが、レビュー済みの head を未レビューと判定する)。
+`WT_PATH` / `BRANCH` / `PR_URL` / `plan_issue` (旧セッションは `plan_file`) / `followups` / `review` をセッションから読み込む。`review` が無ければ初期化する ([セッション保存](#セッション保存) のスキーマ)。旧スキーマのセッション (`push_rounds` や `findings` が無い) は、無いフィールドを初期値で補う。`last_review_commit` が無く `processed_review_ids` があるときは、最後の id の review を `gh api repos/{owner}/{repo}/pulls/{n}/reviews/{id} --jq .commit_id` で引いて補う (null のままだと、push しないラウンドの後で再開したセッションが、レビュー済みの head を未レビューと判定する)。`wait_started_at` が無ければ `last_push_commit` のコミット時刻で補う (`last_push_at` は push しないラウンドで進んでいることがある)。
 
 ---
 
@@ -99,26 +99,34 @@ pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 
 
 **push の後 (Phase 5 の PR 作成直後を含む)**:
 
-1. `review.last_push_at` を更新し、`review.loop_status = "monitoring"` をセッションファイルに保存する (起こされた後と `/dev review` での再開は、ここから状態を読む)
+1. [手順 8](#8-台帳と-baseline-の更新) の「push した場合」の更新 (`last_push_at`、`wait_started_at`、保存した判定の初期化) を済ませ、`review.loop_status = "monitoring"` をセッションファイルに保存する (起こされた後と `/dev review` での再開は、ここから状態を読む)。`wait_started_at` は push のときだけ動かし、push しないラウンドで `last_push_at` を進めても変えない
 2. `mcp__pr-relay__watch` を `pr_url` = `$PR_URL`、`since` = `review.last_push_at` で呼ぶ (pr-relay が自分で拾った baseline ではなく、セッションの baseline に揃える)
 3. CI を待つ手段を用意する ([CI 監視](#ci-監視-gh-pr-checks) の「relay モードでの CI」)
-4. 「PR #N を pr-relay が監視中。CI と Codex の結果を待ちます」と 1 行報告して **ターンを終える**。`poll-codex-review.sh --watch`、`sleep` のループ、ScheduleWakeup では待たない。これは承認待ちの停止ではなく、待機の手段である (SKILL.md「フェーズ間で停止しない」に反しない)
+4. 時間切れ用のタイマーを 1 本張る: `ARMED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep <秒>; echo "armed_at=$ARMED"` を `run_in_background` の Bash で起動する。秒数は `escalate_after_seconds / 2` (既定 1200。Bash の `timeout` はそれより長くする)。pr-relay は時間の経過では起こさないので、これが無いと Codex 未設定のリポジトリやレビューが来ない PR で、`@codex review` のフォールバックと待機上限の分岐に自動では届かない。Codex をポーリングするのではなく、時間切れを確かめるためのもの
+5. 「PR #N を pr-relay が監視中。CI と Codex の結果を待ちます」と 1 行報告して **ターンを終える**。`poll-codex-review.sh --watch`、`sleep` のループ、ScheduleWakeup では待たない。これは承認待ちの停止ではなく、待機の手段である (SKILL.md「フェーズ間で停止しない」に反しない)
 
 **起こされたとき**: プロンプトの種類ごとに、State machine の対応する状態へ入る。
 
 | 届いたもの | 入る状態と最初の作業 |
 |---|---|
 | 「Codex が PR #N … にレビューを付けました」 | `poll-codex-review.sh` を **`--watch` なしで 1 回** 呼ぶ (引数は poll モードと同じで `$LAST_PUSH_AT` = `review.last_push_at`)。`signal=new_review` の `new_comments[]` で [RESPONDING](#1-ラウンドの対応フロー) に入る。pr-relay のプロンプトは件数しか運ばないので、triage に要るコメント本文と id はここで取る |
-| 「Codex が PR #N … を approved にしました」 | 同じ 1 回の呼び出しで `signal=approved` を確かめ、[APPROVED](#approved--による正常終了) の手順に進む。CI が pending なら `review.approved_at` を保存してからターンを終え、CI の結果を待つ |
-| CI の結果 (`ci-monitor-event`、または `gh pr checks --watch` の完了) | bucket を判定する。fail / cancel なら [CI_FIXING](#ci-fail-の修正フロー-ci_fixing)。緑で、Codex がすでに approved か head をレビュー済みなら終端の判定へ。REVIEW_INCOMPLETE の種別 (`timeout_reason`) を記録して CI を待っていたなら、ここで REVIEW_INCOMPLETE として終える。どれでもなければターンを終える |
+| 「Codex が PR #N … を approved にしました」 | 下の「状態の確定」を行う |
+| CI の結果 (`ci-monitor-event`、または `gh pr checks --watch` の完了) | fail / cancel なら [CI_FIXING](#ci-fail-の修正フロー-ci_fixing)。緑なら下の「状態の確定」を行う |
+| 時間切れ用タイマーの完了 | 出力の `armed_at` が `review.wait_started_at` より前 (後の push より前に張ったタイマー) か、ループがすでに終端なら、何もせずターンを終える。それ以外は下の「状態の確定」を行う |
 | 「PR … がマージされました。/dev cleanup の手順で…」 (帯の `cleanup` ボタン) | [Phase 6](phases-5-6.md#phase-6-cleanup-後片付け) へ |
+
+**状態の確定**: approved の知らせ、CI の緑、タイマーの完了は、どれもここに合流する。
+
+1. `poll-codex-review.sh` を 1 回呼ぶ。`new_review` なら RESPONDING に入る。`approved` なら `review.approved_at` を、`usage_limited` なら `review.timeout_reason = "usage-limit"` を保存する。`waiting` なら `review.wait_started_at` からの経過を `total_wait_seconds` として、State machine の `signal=waiting` の分岐 (`@codex review` を 1 回投げる / CI-only / no-head-review / CONVERGED 判定) を適用する
+2. 終端の条件を満たし、head の CI が緑なら終える ([終端とエスカレーション](#終端とエスカレーション))。CI が pending ならターンを終え、CI の結果でもう一度ここに来る。fail なら CI_FIXING に入る
+3. 終端でなく、待機上限にも届いていなければ、残りの時間 (最大 `escalate_after_seconds / 2`) でタイマーを張り直し、`mcp__pr-relay__watch` を呼んでターンを終える
 
 `signal` がプロンプトと食い違う (例: レビューの知らせなのに `waiting`) ときは、セッションファイルの `last_push_at` を確かめ、理由が分からなければターンを終えて次の知らせを待つ。
 
-**pr-relay が起こさない事象**: 次は relay モードではセッションを起こさない。ターンを終えた後に起きたものは、人が `/dev review` で再開したとき、`poll-codex-review.sh` の 1 回呼び出しで判定する。
+**pr-relay が起こさない事象**: 次は relay モードではセッションを起こさない。ターンを終えた後に起きたものは、時間切れ用タイマーで起こされたとき、または人が `/dev review` で再開したときに、上の「状態の確定」で判定する。
 
 - 利用上限 (pr-relay はトーストで人に知らせるだけ): `signal=usage_limited` なら [REVIEW_INCOMPLETE](#review_incomplete-head-が未レビュー) (`usage-limit`)
-- レビューが来ないまま時間が過ぎた: `signal=waiting` なら、`review.last_push_at` からの経過時間を `total_wait_seconds` として、State machine の `signal=waiting` の分岐 (CI-only / no-head-review / CONVERGED 判定 / `@codex review` を 1 回投げる) をそのまま適用する。`@codex review` を投げたら、もう一度 `mcp__pr-relay__watch` を呼んでターンを終える
+- レビューが来ないまま時間が過ぎた: 「状態の確定」の手順 1 の `waiting` の分岐で扱う
 - PR のクローズ (トーストだけ): 再開時に `gh pr view --json state` で確かめ、前提条件 2 に従う
 
 **deny を受けたとき**: 監視中の PR があると、pr-relay は `poll-codex-review.sh --watch` を実行する Bash を「pr-relay is watching … End the turn instead of waiting here.」で deny する (`--watch` なしの 1 回呼び出しは通す)。これを受けたら、再試行も、1 ショットや ScheduleWakeup への切り替えもせず、上の手順 1 の保存を済ませてターンを終える。
@@ -235,7 +243,7 @@ pr-relay は CI を見ない (Desktop アプリが CI の結果をセッショ�
 2. **根本原因を診断してから修正する**。ローカルの Phase 3 検証で再現を試み、再現すればローカルで修正 → PASS を確認してから push する。ローカルで再現しない失敗 (環境差・依存キャッシュ・secrets) はログから原因を特定する。修正の実装は [model-routing.md の判定手順](model-routing.md#判定手順)で実行主体を自律選定し subagent / codex へ委任してよい (診断・PASS 判定・push はメインに残す)
 3. **flaky の扱い**: 失敗が今回の変更と無関係で非決定的に見える場合のみ、`gh run rerun <run-id> --failed` を **1 回だけ**試す。再実行でも落ちたら実問題として扱い、修正する。rerun を繰り返して緑を引き当てるのは禁止
 4. 修正 push は「1 ラウンド 1 push」規律の対象。**CI 修正とレビュー指摘対応が同時に溜まっている場合は 1 つのコミット群にまとめて 1 push にする** (別々に push すると Codex の追跡が壊れる)
-5. push 後は baseline (`review.last_push_at`) を前進させ、`ci_fix_rounds` をインクリメントして CI_WAIT に戻る。CI 修正だけの push は `push_rounds` に数えないが、Codex のパスは 1 回消費し、新しい指摘が出ることもある。レビュー指摘の対応が保留になっているなら、CI 修正を単独で push せず、その対応と同じ push にまとめる
+5. push 後は手順 8 の「push した場合」と同じく baseline (`review.last_push_at`、`review.wait_started_at`) を前進させて保存した判定を戻し、`ci_fix_rounds` をインクリメントして CI_WAIT に戻る。CI 修正だけの push は `push_rounds` に数えないが、Codex のパスは 1 回消費し、新しい指摘が出ることもある。レビュー指摘の対応が保留になっているなら、CI 修正を単独で push せず、その対応と同じ push にまとめる
 6. CI 失敗の原因が **main 由来 (既存問題)** と切り分けられた場合も、CI を落とす以上 Phase 4-B マトリクスの第 1 行に該当するので今回 PR で修正する
 7. 自分では解決できない失敗 (リポジトリ設定・secrets 不足・外部サービス障害・billing 等) に行き着いたら、診断結果を添えて [ESCALATED] へ
 
@@ -370,7 +378,7 @@ NEW_PUSH_AT=$(git -C "$WT_PATH" show -s --format=%cI HEAD)  # ISO8601
 - `review.findings[]` に各コメントを追記する: `{id, round, severity, path, title, validity, disposition, evidence, sha, issue_url}` ([セッション保存](#セッション保存))
 - `review.processed_comment_ids` に対応した id を追加、`rebutted_comment_ids` に反論した id を追加、`processed_review_ids` に処理した review id を追加
 - **baseline (`review.last_push_at`) を必ず前進させる**:
-  - push した場合: `review.last_push_at = NEW_PUSH_AT`、`review.last_push_commit = NEW_SHA`、`push_rounds += 1`
+  - push した場合: `review.last_push_at = review.wait_started_at = NEW_PUSH_AT`、`review.last_push_commit = NEW_SHA`、`push_rounds += 1`。前の head について保存した `approved_at` と `timeout_reason` は null に戻す (待ち方によらず、push はすべてこの更新を通る)
   - push しなかった場合: `review.last_push_at = 処理した最新 review の submitted_at`。前進させないと同じ review が次の MONITORING で再び `new_review` として返り、コメントは全て処理済みで 0 件、即 MONITORING、また同じ review、という無限スピンになる
 - `review.last_review_commit = 処理した最新 review の commit_id` を保存する。push しなかったラウンドで baseline をその review の `submitted_at` に進めると、再開後のポーリングはその review を返さない (`latest_review: null`) ので、CONVERGED 条件 1 はこの値で判定する
 - `review.rounds += 1` (受信したレビュー数)、`updated_at` 更新
@@ -464,7 +472,7 @@ Codex の 👍 は無いが、次を全て満たせば終了する:
 4. head に対する CI が全成功
 5. `review.head_local_review` が `"unreviewed"` でない
 
-`review.loop_status = "converged"`、`terminal_reason = "converged"` を保存し、報告では「Codex の 👍 は付いていない。最終レビューの指摘は全て disposition 済み」と明記する。条件 1 を満たさない (head が未レビュー) なら終端にせず MONITORING に戻る (relay モードでは `mcp__pr-relay__watch` を呼んでターンを終える)。head のレビューを待つうちに利用上限か待機上限に達したときだけ REVIEW_INCOMPLETE にする。条件 2 で rebut にユーザー確認が無いなら ESCALATED。
+`review.loop_status = "converged"`、`terminal_reason = "converged"` を保存し、報告では「Codex の 👍 は付いていない。最終レビューの指摘は全て disposition 済み」と明記する。条件 1 を満たさない (head が未レビュー) なら終端にせず MONITORING に戻る (relay モードでは「状態の確定」の手順 3 と同じく、タイマーが残っていなければ張り直し、`mcp__pr-relay__watch` を呼んでターンを終える)。head のレビューを待つうちに利用上限か待機上限に達したときだけ REVIEW_INCOMPLETE にする。条件 2 で rebut にユーザー確認が無いなら ESCALATED。
 
 ### REVIEW_INCOMPLETE (head が未レビュー)
 
@@ -531,6 +539,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "last_push_at": "2026-05-30T01:00:00Z",
   "last_push_commit": "abc1234...",
   "last_review_commit": null,          // 最後に処理した Codex review の commit_id (CONVERGED 条件 1 の判定用)
+  "wait_started_at": "2026-05-30T01:00:00Z", // 最後の push の時刻。push しないラウンドでは動かさない (待機時間と relay モードのタイマーの基準)
   "processed_review_ids": [],
   "processed_comment_ids": [],
   "rebutted_comment_ids": [],
@@ -572,7 +581,7 @@ GitHub 上のラウンド数は 1 の内訳として見る。ラウンドが減�
 
 ## 禁止事項
 
-- **👍 が付くまで push を続けない**。終端は APPROVED / CONVERGED / REVIEW_INCOMPLETE のいずれかで、いずれも CI 全成功と head レビューの確認を伴う。CI 緑だけでも終了しない (Codex 設定済みリポジトリではレビューの完了を待つ)
+- **👍 が付くまで push を続けない**。終端は APPROVED / CONVERGED / REVIEW_INCOMPLETE のいずれかで、いずれも CI 全成功を伴う。APPROVED と CONVERGED は head レビューの確認も伴い、REVIEW_INCOMPLETE は head が未レビューであることを記録して報告する。CI 緑だけでも終了しない (Codex 設定済みリポジトリではレビューの完了を待つ)
 - **返信だけのラウンドで `@codex review` を投げない**。同じ commit が再レビューされ、前のパスで出なかった指摘が出る。`@codex review` は push 後に自動レビューが来ないときの 1 PR 1 回のフォールバック
 - **成立を確認せずに fix にしない / 提案コードをそのまま貼らない**。指摘は問題の記述として読み、不変条件から変更を決める。同根の箇所は同じ commit で直す
 - **push 前ローカルレビューを、修正の検証以外に広げない**。既定は focus 付き 1 パス。変更全体の再発見はクラウドの「徹底的なコードレビュー」に任せる (ローカル 1 パスは週間利用枠の 0.5〜1%)。1 行の機械的修正だけの push には掛けない。CLI 不在やタイムアウトで掛けられなかったときは理由を記録して続行する

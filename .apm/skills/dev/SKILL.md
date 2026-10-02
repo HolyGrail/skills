@@ -151,7 +151,7 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 ### Phase 5.5 (CI + Codex レビュー対応) の Gotchas
 
 - **CI 判定は `gh pr checks` の bucket で行う**。`pass` / `skipping` 以外の bucket (`fail` / `pending` / `cancel`) が残っていれば CI 未達。checks が 1 つも無いリポジトリ (「no checks reported」エラー) は CI 条件を満たしたとみなす。`--watch` は前景 sleep がブロックされるため **`run_in_background` で起動する**
-- **終端は APPROVED / CONVERGED / REVIEW_INCOMPLETE のいずれかで、いずれも「最新 push に対する CI 全成功」と head レビューの確認を伴う**。👍 だけ、CI 緑だけで終了しない。逆に「👍 が付くまで push を続ける」もしない。head に対する最新レビューの P1/P2 が全て disposition 済みなら、👍 が無くても CONVERGED で終了する
+- **終端は APPROVED / CONVERGED / REVIEW_INCOMPLETE のいずれかで、いずれも「最新 push に対する CI 全成功」を伴う**。APPROVED と CONVERGED は head レビューの確認も伴い、REVIEW_INCOMPLETE は head が未レビューであることを記録して報告する。👍 だけ、CI 緑だけで終了しない。逆に「👍 が付くまで push を続ける」もしない。head に対する最新レビューの P1/P2 が全て disposition 済みなら、👍 が無くても CONVERGED で終了する
 - **Codex は 1 パスに 1〜2 件しか指摘を出さなかった** (2026-03〜09 の 506 ラウンドで 1 件 74%、2 件 22%。2026-09-07 から「徹底的なコードレビュー」ON)。指摘を 1 件直して push するたびに次の 1〜2 件が出るので、**push 前に `scripts/local-codex-review.sh` を focus 付きで 1 パス掛け、修正とその影響先の P1/P2 を消化してから 1 回 push する**。ローカル 1 パスは週間利用枠の 0.5〜1% を消費し、クラウドのレビューと同じメーターに載るので、変更全体の再発見には使わない。1 行の機械的修正だけの push や返信だけのラウンドには掛けない。PR 作成前の全体レビューはリスクの高い変更 (並行制御 / 状態遷移 / 永続化 / schema / 認可、500 行超) に限る
 - **指摘は問題の記述として読み、提案コードをそのまま貼らない**。成立を一次情報で確認してから fix にし、P1 と並行制御・状態遷移・永続化の P2 には修復記録 (失敗 / 不変条件 / 修復 / 証拠) を書く。同根の箇所は同じ commit で直す。12 ラウンド続いた PR は 13 件中 10 件が「提案どおり直した箇所への次の指摘」だった
 - **push 予算は 3 回 (`max_push_rounds`)。エスカレーションの中で上げない**。上限 5 ラウンドの時代に「続行」で 8 / 10 / 12 に上がった実績があるので、選択肢に「続行」を置かない
