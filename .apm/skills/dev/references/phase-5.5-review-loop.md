@@ -381,7 +381,7 @@ PUSHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)                    # 実際に push し
 - **baseline (`review.last_push_at`) を必ず前進させる**:
   - push した場合: `review.last_push_at = NEW_PUSH_AT`、`review.wait_started_at = PUSHED_AT` (コミットから時間をおいて push しても、待機をレビューの来る前に打ち切らないよう、待機の基準は実際の push 時刻にする)、`review.last_push_commit = NEW_SHA`、`push_rounds += 1`、`total_wait_seconds = 0` (poll モードの待機時間も push ごとに数え直す)。前の head について保存した `approved_at` と `timeout_reason` は null に戻す (待ち方によらず、push はすべてこの更新を通る)
   - push しなかった場合: `review.last_push_at = 処理した最新 review の submitted_at`。前進させないと同じ review が次の MONITORING で再び `new_review` として返り、コメントは全て処理済みで 0 件、即 MONITORING、また同じ review、という無限スピンになる
-- `review.last_review_commit = 処理した最新 review の commit_id` を保存する。push しなかったラウンドで baseline をその review の `submitted_at` に進めると、再開後のポーリングはその review を返さない (`latest_review: null`) ので、CONVERGED 条件 1 はこの値で判定する
+- `review.last_review_commit = 処理した最新 review の commit_id` を保存する。push しなかったラウンドで baseline をその review の `submitted_at` に進めると、再開後のポーリングはその review を返さない (`latest_review: null`) ので、CONVERGED 条件 1 はこの値で判定する。その commit_id が head と一致し、`head_local_review` が `"unreviewed"` なら `"cloud-reviewed"` に更新する (head を Codex が見たので、手順 6 の「Codex レビューが head を見るまで」が満たされる)
 - `review.rounds += 1` (受信したレビュー数)、`updated_at` 更新
 - push した場合は CI_WAIT に戻る (relay モードでは [待ち方](#待ち方-relay-モードと-poll-モード) の「push の後」の手順で待つ)。push しなかった場合は [CONVERGED 判定](#converged-push-を伴わないラウンドの終端) に進む。**push しなかったラウンドで `@codex review` は投げない** (同じ commit が再レビューされ、新しい指摘が出る)
 
@@ -535,7 +535,7 @@ latency timeout に達し、かつ **この PR で Codex イベント (review / 
   "max_push_rounds": 3,
   "ci_fix_rounds": 0,
   "local_review_passes": 0,             // Phase 5 と 5.5 で掛けたローカルレビューのパス数
-  "head_local_review": "clean",         // clean|unreviewed|skipped|cloud-first
+  "head_local_review": "clean",         // clean|unreviewed|skipped|cloud-first|cloud-reviewed
   "codex_review_requested": false,      // この PR で @codex review を投げたか (1 PR 1 回)
   "last_push_at": "2026-05-30T01:00:00Z",
   "last_push_commit": "abc1234...",
