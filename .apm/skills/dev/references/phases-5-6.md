@@ -15,35 +15,55 @@ PR 作成からマージ後の片付けまでの 3 フェーズ詳細。SKILL.md
 
 **注意**: git 操作は `git -C "$WT_PATH" ...`、`/pr-create` 等の委譲先スキルも `cd "$WT_PATH" && ...` で起点を揃える。
 
-### 前提条件 (厳守)
+### 前提条件
 
-Phase 5 に進む前に、以下を必ず満たす:
+Phase 5 に進む前に、以下を満たす:
 
 - Phase 3 の全検証が PASS、または
 - 残る FAIL は全て「既存問題」かつ Phase 4-B の自動判断マトリクスで「separate-pr」または「out-of-scope」が確定済み (PR 本文に明記する前提)
 
-新規問題が未解消、または既存問題の対応が未確定の状態で Phase 5 に進むのは禁止。
+新規問題が未解消なら main を壊しうる PR になり、既存問題の対応が未確定なら PR 本文の「既存問題の対応方針」節が書けない。どちらかが残っている間は Phase 5 に進まない。
 
 ### 手順
 
 1. git の状態確認: `git -C "$WT_PATH" status` / `git -C "$WT_PATH" branch --show-current`
-2. 変更内容を分析してコミットメッセージを作成
-3. コミット・プッシュ: `cd "$WT_PATH" && git add ... && git commit ... && git push -u origin "$BRANCH"`
-4. **Test plan 構築**: 計画 issue の「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は次節「Test plan 構築ルール」)
-5. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は次節「PR body テンプレート」と「PR 作成コマンド」):
+2. 変更内容を分析してコミットメッセージを作成し、ローカルにコミットする (push はまだしない)
+3. **PR 作成前ローカルレビュー (条件付き)** (詳細は次節「PR 作成前ローカルレビュー」): 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超えるときだけ、`scripts/local-codex-review.sh` で変更全体を AGENTS.md の基準でレビューし、P1/P2 を直してから push する。それ以外は掛けずに PR を開き、最初の広い発見は「徹底的なコードレビュー」を ON にしたクラウドのレビュー (2026-09-07 以降) に任せる。ローカルの 1 パスは週間利用枠の 0.5〜1% を消費し、クラウドのレビューと同じメーターに載る (2026-09-07 実測)。セッションに `review` オブジェクトがまだ無ければ、この手順で [session-management.md](session-management.md#スキーマ) の初期値 (`loop_status: null`、`push_rounds: 0`、`findings: []` など) で作り、`local_review_passes` と `head_local_review` (掛けなかったときは `"cloud-first"`) をここに書く
+4. プッシュ: `cd "$WT_PATH" && git push -u origin "$BRANCH"`
+5. **Test plan 構築**: 計画 issue の「検証方法」節と Phase 3 結果から、PR body に含める Test plan チェックリストを作る (詳細は「Test plan 構築ルール」)
+6. **PR body をファイルに書き出してから `gh pr create --body-file` で作成** (詳細は「PR body テンプレート」と「PR 作成コマンド」)。本文には「レビュアー向けの前提」節を含める (意図、不変条件、意図的に対応しないこと、環境制約、ローカルレビューの結果):
    - **`--draft` を付けない (Open PR として作成する)**。Codex が設定されたリポジトリでは PR open をトリガーに自動レビューが走り、CI もこの時点で起動する — Phase 5.5 がそのまま両方を監視する
    - **Claude Code デフォルトテンプレート (`## Summary` / `## Test plan` の素のプレースホルダ `[Bulleted markdown checklist of TODOs...]`) にフォールバックしない**。本フェーズで構築済みの body をそのまま使う
    - `/pr-create` slash command に **委譲しない** (デフォルトテンプレートに戻る原因になる)
-6. 計画 issue の本文を更新: ステータス行を `completed` にし、「結果」節を記入する (`gh issue edit <番号> --body-file`、mktemp + head 検証 + cognitive-rhythm-writing 推敲のルールは issue 作成時と同じ)。**issue のクローズはここでは行わない** — この PR で計画 issue の全項目が完結するなら PR body の `Closes #<番号>` によるマージ時自動クローズに任せ、計画 issue が複数 PR で消化するチェックリスト形式なら `Closes` を使わず部分消化を明示する (グローバル CLAUDE.md「Issue 管理」ルール)
-7. **セッションファイル更新**:
+7. 計画 issue の本文を更新: ステータス行を `completed` にし、「結果」節を記入する (`gh issue edit <番号> --body-file`、mktemp + head 検証 + cognitive-rhythm-writing 推敲のルールは issue 作成時と同じ)。**issue のクローズはここでは行わない** — この PR で計画 issue の全項目が完結するなら PR body の `Closes #<番号>` によるマージ時自動クローズに任せ、計画 issue が複数 PR で消化するチェックリスト形式なら `Closes` を使わず部分消化を明示する (グローバル CLAUDE.md「マルチ PR で消化する issue」)
+8. **セッションファイル更新**:
    - `pr_url`: `gh pr view --json url -q .url` で取得
    - `status`: `"pr-open"`
    - `pr_opened_at`: ISO 8601 タイムスタンプ
    - `updated_at`: 同上 (以後の post-PR 修正で更新される)
-8. **Phase 5.5 (CI + Review Loop) へ自動続行する**: PR URL をユーザーにナレーションで提示した上で、そのまま [phase-5.5-review-loop.md](phase-5.5-review-loop.md) の監視ループに入る (`/dev review` の明示起動を待たない)。CI 全成功 + approved で終端し、完了報告とあわせて次を案内する:
+   - `review.local_review_passes` と `review.head_local_review`: 手順 3 の結果
+9. **Phase 5.5 (CI + Review Loop) へ自動続行する**: PR URL をユーザーにナレーションで提示した上で、そのまま [phase-5.5-review-loop.md](phase-5.5-review-loop.md) の監視ループに入る (`/dev review` の明示起動を待たない)。relay モードなら、最初の待機も [待ち方](phase-5.5-review-loop.md#relay-モード) に従う。CI 全成功 + レビュー収束 (approved / converged) で終端し、完了報告とあわせて次を案内する:
    - 人手主導で追加修正したい場合は `/dev resume <slug>` (Phase 5-bis)
    - セッションが中断した場合は `/dev review <slug>` でループを再開できる
    - **マージ後に `/dev cleanup` を実行すると worktree を掃除する**
+
+### PR 作成前ローカルレビュー
+
+Codex のクラウドレビューは 1 パスに 1〜2 件ずつしか指摘を出さなかった (2026-03〜09 の 506 ラウンドで 1 件が 74%、2 件が 22%)。2026-09-07 に「徹底的なコードレビュー」を全リポジトリで ON にしたので、最初の広い発見はクラウドに任せ、ローカルのレビューはリスクの高い変更に限る。ローカルの 1 パスは合計 100〜120 万トークン (9 割はキャッシュ入力) で、週間利用枠の 0.5〜1% を消費する。クラウドのレビューと同じメーターに載るので、掛けた分だけクラウドの往復を減らせなければ損になる。
+
+掛ける条件: 変更が並行制御、状態遷移、永続化、schema、認可のいずれかに触れる、または変更行数が 500 を超える。どちらにも当たらなければ掛けずに PR を開き、`review.head_local_review = "cloud-first"` と記録する。
+
+```bash
+SCRIPT=~/.claude/skills/dev/references/scripts/local-codex-review.sh
+# 1 パス 4〜6 分 (関連テストの実行や実 DB での再現を含む)。run_in_background で起動し、完了通知で戻る
+"$SCRIPT" "$WT_PATH" "origin/$DEFAULT_BRANCH"
+```
+
+- **1 パス目**: 変更全体を対象にする。出た P1/P2 は成立を一次情報で確認し、成立するものを Phase 4 の修正ループで直す (修復の考え方は [phase-5.5-review-loop.md 手順 4〜5](phase-5.5-review-loop.md#4-修復記録))。P3 は `followups[]` に記録する
+- **2 パス目** (1 パス目で P1/P2 が出て直した場合のみ): `--focus "<直した振る舞いと影響先>"` を付けて掛ける。ここでも P1/P2 が出て直したら、その head はローカルレビューを通っていない。`review.head_local_review = "unreviewed"` として記録し、PR 本文の「レビュアー向けの前提」にその旨を書く。3 パス目は掛けない (ループを手元で再現するだけになる)
+- codex CLI が無い、またはタイムアウトしたときは `head_local_review = "skipped"` と理由を記録して続行する
+- パスごとに見つかる集合は変わる。ローカルで出なかった指摘がクラウドで出ることはある。それは Phase 5.5 で処理する
+- 掛けたパス数を `review.local_review_passes` に記録する。効果は `~/.claude/tools/codex-review-metrics/compare.py` の表 D (ローカル事前レビュー別のクラウド 1 ラウンド目の指摘数) で確かめる
 
 ### Test plan 構築ルール
 
@@ -109,7 +129,16 @@ Phase 5 (初回 PR 作成) の body は次のフォーマットで生成する�
 |---------|---------|------|------|
 | 型チェック | `tsc --noEmit` | PASS | 自動 |
 | Lint     | `eslint .`   | PASS | 自動 |
+| ローカル Codex レビュー | `local-codex-review.sh` | P1/P2 0 件 (2 パス目) | 自動 |
 | ...     | ...         | ...  | ...  |
+
+## レビュアー向けの前提
+
+- 意図: <この変更が何を保証し、何を保証しないか>
+- 不変条件: <変更後も保たれるべき性質。並行実行、失敗時、再試行時の扱い>
+- 意図的に対応しないこと: <既知の指摘候補と、その判断の根拠>
+- 環境制約: <ローカルで検証できなかった経路と理由>
+- ローカルレビュー: <パス数と、出た P1/P2 の処理。2 パス目で直して未レビューの head ならその旨>
 
 ## Test plan
 
@@ -140,6 +169,8 @@ PR_BODY=$(mktemp -t pr-body.XXXXXX.md)
 cat > "$PR_BODY" <<'EOF'
 <上記テンプレートを Test plan 構築ルールに従って埋めたもの>
 EOF
+# 投稿前に内容を検証 (想定する書き出しが含まれるか目視確認)
+head -c 300 "$PR_BODY"
 
 cd "$WT_PATH" && gh pr create \
   --base "$DEFAULT_BRANCH" \
@@ -158,7 +189,7 @@ rm -f "$PR_BODY"
 
 **目的**: PR 作成後・マージ前の追加修正で、コード修正だけでなく **PR 本文・検証結果・ADR リンクも同期更新**してドキュメント整合性を保つ。
 
-> **Phase 5-bis と Phase 5.5 の違い**: 5-bis は **人手主導**の追加修正 (`/dev resume`)。CI と Codex 自動レビューへの **能動監視・フル自動対応** は Phase 5.5 (Phase 5 から自動突入、再開は `/dev review`。[phase-5.5-review-loop.md](phase-5.5-review-loop.md))。両者は本節の PR 本文同期ルール (Test plan 保持・変更履歴) と `followups[]` を共有する。5-bis で push した後は Phase 5.5 のループに戻り、CI 全成功 + approved を再確認する。
+> **Phase 5-bis と Phase 5.5 の違い**: 5-bis は **人手主導**の追加修正 (`/dev resume`)。CI と Codex 自動レビューへの **能動監視・フル自動対応** は Phase 5.5 (Phase 5 から自動突入、再開は `/dev review`。[phase-5.5-review-loop.md](phase-5.5-review-loop.md))。両者は本節の PR 本文同期ルール (Test plan 保持・変更履歴) と `followups[]` を共有する。5-bis で push した後は Phase 5.5 のループに戻り、終端条件 (CI 全成功 + レビュー収束) を確かめ直す。
 
 ### 起動方法
 
@@ -182,7 +213,7 @@ rm -f "$PR_BODY"
 
 #### 2. 追加修正を Phase 2 同等で実装
 
-- 変更内容は TaskCreate で管理
+- 変更内容はナレーションと計画 issue の「変更履歴」節で追跡する (タスク管理ツールが利用可能な環境ではそれも使ってよい)
 - 設計判断が絡むなら ADR を追記 (新規 ADR 番号を採番)
 - 計画 issue 本文の「変更履歴」節を追記 (なければ作る)。更新は `gh issue edit <番号> --body-file` で行い、ADR 追記分の「ADR」節更新もまとめて 1 回で反映する
 
@@ -267,6 +298,7 @@ NEW_BODY=$(mktemp)
 cat > "$NEW_BODY" <<'EOF'
 <上記テンプレートを slug / followups / 検証結果で埋めたもの>
 EOF
+head -c 300 "$NEW_BODY"   # 投稿前に想定する書き出しが含まれるか目視確認
 gh pr edit "$PR_URL" --body-file "$NEW_BODY"
 rm -f "$NEW_BODY"
 ```
@@ -299,10 +331,13 @@ heredoc は **クォート付き `<<'EOF'`** を使う (Phase 5 の `gh pr creat
 
 **目的**: PR がマージされた後、worktree とブランチをローカルから削除し、セッションファイルを `cleaned` にする。
 
-**起動方法**: 通常の `/dev` フロー (Phase 0→5.5) からは自動実行しない。PR マージ確認は分〜日単位の非同期タスクなので、ユーザーが明示的に `/dev cleanup` で起動。
+**起動方法**: 通常の `/dev` フロー (Phase 0→5.5) からは自動実行しない。PR マージ確認は分〜日単位の非同期タスクなので、ユーザーが明示的に `/dev cleanup` で起動するか、pr-relay の帯の `cleanup` ボタンを押して起動する。
 
 ### 呼び出し形態
 
+- pr-relay の `cleanup` ボタン — 「PR <URL> がマージされました。/dev cleanup の手順で worktree とブランチを片付けてください。」というプロンプトが届く
+  - ボタンを押したのはユーザーなので、`/dev cleanup` の明示起動と同じに扱う。手順 2 の state 確認は省かない
+  - セッションは、プロンプトの URL と `pr_url` が一致する `~/.claude/dev-sessions/*.json` で特定する (URL は大文字小文字を無視して比べる)。見つからなければ下の引数なしと同じ探し方に落とす
 - `/dev cleanup` — 引数なし
   - cwd を `git rev-parse --show-toplevel` で確認し、worktree 内なら対応セッションを特定
   - cwd が main リポジトリ側 or セッション外なら、`~/.claude/dev-sessions/*.json` のうち `status == "pr-open"` を AskUserQuestion で選択
@@ -476,12 +511,29 @@ git -C "$REPO_ROOT" wt -d "$BRANCH"
 }
 ```
 
+#### 7.5. プロジェクト固有の cleanup 後処理 (あれば実行、ベストエフォート)
+
+**目的**: マージ済みのコードを手元の実行環境へ反映する、ローカルの生成物を掃除するなど、プロジェクトごとに cleanup の締めとして走らせたい処理を実行する。
+
+プロジェクトの `CLAUDE.md` に「`/dev cleanup` 後の後処理」に相当する節があれば、その手順に従って実行する。無ければ本手順はスキップする (無いこと自体は報告しなくてよい)。
+
+実行ルール:
+
+- **ベストエフォート**。失敗しても cleanup は完了扱いにし、手順 8 のレポートに結果 (成功 / skip の理由 / 失敗の理由) を 1 行残す。ロールバックはしない
+- **作業ディレクトリは `$REPO_ROOT`**。worktree は手順 5 で削除済みで、対象はマージ後の default ブランチであってタスクブランチではない
+- **`$REPO_ROOT` の作業ツリーを勝手に動かさない**。最新化は「default ブランチ上」かつ「`git status --porcelain` が空」かつ「fast-forward できる」の 3 条件が揃ったときだけ行い、コマンドは `git pull --ff-only` を使う。1 つでも欠けたら最新化を skip して警告する (ユーザーが default ブランチ側で別の作業をしている可能性がある。porcelain が空でも未 push のコミットがあれば、素の `git pull` は設定次第でマージコミットや rebase を作る)
+- **外部デバイス・外部環境への依存は実行時に検出する**。接続されていなければ skip として報告し、エラー扱いにしない
+- 数分かかる処理になりうるため、開始時に何をしているかナレーションで宣言する
+
+セッションファイルの `status: "cleaned"` (手順 7) は、本手順の成否に関わらず維持する。
+
 #### 8. 最終確認レポート
 
 - 削除した worktree パス
 - 削除したローカルブランチ
 - リモートブランチの扱い (削除 / 保持)
 - **作成した GitHub issue 一覧** (手順 2.5 の結果、新規 / 既存にマップされた件数)
+- **プロジェクト固有の cleanup 後処理の結果** (手順 7.5。実行したか / skip したか、その理由)
 - 参考: 残っている他セッション一覧 (`status: "pr-open"` / `"in-progress"`)
 
 ### 前提条件

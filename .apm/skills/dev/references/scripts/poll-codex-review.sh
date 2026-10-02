@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
 # poll-codex-review.sh — Codex (chatgpt-codex-connector[bot]) の PR レビュー状態を監視する。
-# /dev Phase 5.5 (Codex Review Response Loop) の監視メカニズム本体。
+# /dev Phase 5.5 (CI + Review Loop) の監視メカニズム本体。
 #
-# 観測 (HolyGrail/GBF-community #925 / #812) で確定した Codex の挙動に基づく:
+# 観測 (HolyGrail/GBF-community #925 / #812 / #1282 ほか) で確定した Codex の挙動に基づく:
 #   - 指摘あり  → pulls/{n}/reviews に review (state=COMMENTED) + pulls/{n}/comments に inline comments
-#   - 指摘なし  → issues/{n}/reactions に +1 (👍)。APPROVED state の review は使わない
+#   - 指摘なし  → issues/{n}/reactions に +1 (👍)。issue comment「Codex Review: Didn't find any major
+#                 issues.」が併せて付くこともある。APPROVED state の review は使わない
+#   - 利用上限  → issue comment「You have reached your Codex usage limits for code reviews」。
+#                 以後レビューは付かない
 #   - 👀(eyes)  → レビュー進行中の一時マーカー (完了後は消える。終端判定には使わない)
 #   - 再レビュー → push (新コミット) でトリガー。中間コミットはスキップ、最終コミットは +1 のみのことが多い
 #
@@ -26,15 +29,16 @@
 #
 # 出力 (stdout, 1 行 JSON):
 #   {
-#     "signal": "approved" | "new_review" | "waiting",
-#     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 の時刻
+#     "signal": "approved" | "new_review" | "usage_limited" | "waiting",
+#     "approved_at": "<ISO|null>",          # last_push_iso 以降の codex +1 か「Didn't find any major issues」の時刻
+#     "usage_limit_at": "<ISO|null>",       # last_push_iso 以降の利用上限コメントの時刻
 #     "latest_review": {id, commit_id, submitted_at, ...} | null,  # 同以降の最新 codex review
 #     "new_comments": [ {id, pull_request_review_id, in_reply_to_id, path, line,
 #                        outdated, commit_id, html_url, created_at, body}, ... ],
 #     "eyes_present": true|false,            # codex の 👀 が今ついているか (補助情報)
 #     "checked_at": "<ISO>"
 #   }
-# signal 優先順位: approved > new_review > waiting。
+# signal 優先順位: approved > new_review > usage_limited > waiting。
 # 終了コード: 0 = 正常 (signal は JSON 参照)、2 = 引数エラー、3 = gh/jq 実行エラー。
 
 set -euo pipefail
@@ -45,7 +49,7 @@ MAX_WAIT=540
 WATCH=0
 
 usage() {
-  sed -n '2,40p' "$0" >&2
+  sed -n '2,44p' "$0" >&2
   exit 2
 }
 
@@ -70,14 +74,31 @@ now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # 1 ショット判定。stdout に 1 行 JSON を出す。
 check() {
-  local reactions reviews comments approved_at eyes fresh_reviews latest_review review_ids has_review new_comments signal
+  local reactions reviews comments issue_comments reaction_at no_issues_at approved_at usage_limit_at eyes
+  local fresh_reviews latest_review review_ids has_review new_comments signal
 
   reactions=$(gh api "repos/$REPO/issues/$PR/reactions" --paginate 2>/dev/null || echo '[]')
   reviews=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate 2>/dev/null || echo '[]')
+  issue_comments=$(gh api "repos/$REPO/issues/$PR/comments" --paginate 2>/dev/null || echo '[]')
 
   # last_push 以降の codex +1 (approved シグナル)
-  approved_at=$(printf '%s' "$reactions" | jq -r --arg bot "$BOT" --arg base "$BASE" \
+  reaction_at=$(printf '%s' "$reactions" | jq -r --arg bot "$BOT" --arg base "$BASE" \
     '[.[] | select(.user.login==$bot and .content=="+1" and .created_at > $base)]
+     | map(.created_at) | max // ""')
+
+  # last_push 以降の「Didn't find any major issues」コメント (approved の第 2 形態)
+  no_issues_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg base "$BASE" \
+    '[.[] | select(.user.login==$bot and .created_at > $base
+                   and (.body | test("Didn'"'"'t find any major issues"; "i")))]
+     | map(.created_at) | max // ""')
+
+  # 文字列比較で新しい方を取る。GitHub の created_at は常に "YYYY-MM-DDTHH:MM:SSZ" の UTC なので辞書順 = 時刻順
+  approved_at=$(printf '%s\n%s\n' "$reaction_at" "$no_issues_at" | sort | tail -n 1)
+
+  # last_push 以降の利用上限コメント
+  usage_limit_at=$(printf '%s' "$issue_comments" | jq -r --arg bot "$BOT" --arg base "$BASE" \
+    '[.[] | select(.user.login==$bot and .created_at > $base
+                   and (.body | test("reached your Codex usage limits"; "i")))]
      | map(.created_at) | max // ""')
 
   # codex の 👀 が今あるか (補助。終端判定には使わない)
@@ -108,17 +129,20 @@ check() {
 
   if   [ -n "$approved_at" ];      then signal="approved"
   elif [ "$has_review" = "true" ]; then signal="new_review"
+  elif [ -n "$usage_limit_at" ];   then signal="usage_limited"
   else                                  signal="waiting"; fi
 
   jq -cn \
     --arg signal "$signal" \
     --arg approved_at "$approved_at" \
+    --arg usage_limit_at "$usage_limit_at" \
     --argjson latest_review "${latest_review:-null}" \
     --argjson new_comments "$new_comments" \
     --argjson eyes "${eyes:-false}" \
     --arg checked_at "$(now_iso)" \
     '{signal: $signal,
       approved_at: (if $approved_at=="" then null else $approved_at end),
+      usage_limit_at: (if $usage_limit_at=="" then null else $usage_limit_at end),
       latest_review: $latest_review,
       new_comments: $new_comments,
       eyes_present: $eyes,
