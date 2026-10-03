@@ -358,7 +358,7 @@ heredoc は **クォート付き `<<'EOF'`** を使う (Phase 5 の `gh pr creat
 
 ### 呼び出し形態
 
-- pr-relay の `cleanup` ボタン — 「PR <URL> がマージされました。/dev cleanup の手順で worktree とブランチを片付けてください。」というプロンプトが届く
+- pr-relay の `cleanup` ボタン — 「PR <URL> がマージされました。この PR のブランチの worktree とローカルブランチを片付けてください。…」というプロンプトが届く。プロンプトはブランチと worktree を `gh pr view` と `git worktree list` で確かめるよう求めるが、`/dev` では下のとおりセッションファイルから特定する。Desktop アプリでは、セッションに紐付いたほかの PR のマージでも、その PR の `cleanup` ボタンが出る
   - ボタンを押したのはユーザーなので、`/dev cleanup` の明示起動と同じに扱う。手順 2 の state 確認は省かない
   - セッションは、プロンプトの URL と `pr_url` が一致する `~/.claude/dev-sessions/*.json` で特定する (URL は大文字小文字を無視して比べる)。見つからなければ下の引数なしと同じ探し方に落とす
 - `/dev cleanup` — 引数なし

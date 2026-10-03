@@ -98,6 +98,8 @@ poll モードは [State machine](#state-machine) の図のとおり、`gh pr ch
 
 pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 👍 (または「Didn't find any major issues」)、マージのときにプロンプトでセッションを起こす。待つ側は監視を頼んでターンを終える。
 
+Desktop アプリで PR の Auto-fix (CI モニター) が on のときは、Codex のレビューコメントと利用上限のコメントは CI モニターの `<ci-monitor-event>` で届き、pr-relay からは届かない (同じコメントで二重に起こさないため)。pr-relay はその PR では Codex の 👍 とマージだけを知らせ、ステータス行に「CI モニター併用」と出す。
+
 **push の後 (Phase 5 の PR 作成直後を含む)**:
 
 1. [手順 8](#8-台帳と-baseline-の更新) の「push した場合」の更新 (`last_push_at`、`wait_started_at`、保存した判定の初期化) を済ませ、`review.loop_status = "monitoring"` をセッションファイルに保存する (起こされた後と `/dev review` での再開は、ここから状態を読む)。`last_push_at` と `wait_started_at` は push のときだけ動かす
@@ -110,11 +112,12 @@ pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 
 
 | 届いたもの | 入る状態と最初の作業 |
 |---|---|
-| 「Codex が PR #N … にレビューを付けました」 | `poll-codex-review.sh` を **`--watch` なしで 1 回** 呼ぶ (引数は poll モードと同じで `$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`、記録があれば `--limit-head` = `review.usage_limit.head`)。`signal=new_review` の `new_comments[]` で [RESPONDING](#1-ラウンドの対応フロー) に入る。pr-relay のプロンプトは件数しか運ばないので、triage に要るコメント本文と id はここで取る |
+| 「Codex が PR #N … にレビューを付けました」 | `poll-codex-review.sh` を **`--watch` なしで 1 回** 呼ぶ (引数は poll モードと同じで `$LAST_PUSH_AT` = `review.last_push_at`、`--processed-reviews` = `review.processed_review_ids`、記録があれば `--limit-head` = `review.usage_limit.head`)。`signal=new_review` の `new_comments[]` で [RESPONDING](#1-ラウンドの対応フロー) に入る。pr-relay のプロンプトも指摘の本文と comment id を載せるが、処理済みの review との照合と台帳の更新はスクリプトの結果で行う |
+| `<ci-monitor-event>` のレビューコメント (Auto-fix が on の PR) | 上の「レビューを付けました」の行と同じ |
 | 「Codex が PR #N … を approved にしました」 | 下の「状態の確定」を行う |
 | CI の結果 (`ci-monitor-event`、または `gh pr checks --watch` の完了) | fail / cancel なら [CI_FIXING](#ci-fail-の修正フロー-ci_fixing) に入る (その手順 0 で届いていたレビューを拾う)。緑なら下の「状態の確定」を行う |
 | 時間切れ用タイマーの完了 | 出力の `armed_at` が `review.wait_started_at` より前 (後の push より前に張ったタイマー) か、ループがすでに終端なら、何もせずターンを終える。それ以外は下の「状態の確定」を行う |
-| 「PR … がマージされました。/dev cleanup の手順で…」 (帯の `cleanup` ボタン) | [Phase 6](phases-5-6.md#phase-6-cleanup-後片付け) へ |
+| 「PR … がマージされました。この PR のブランチの worktree とローカルブランチを片付けてください。…」 (帯の `cleanup` ボタン) | [Phase 6](phases-5-6.md#phase-6-cleanup-後片付け) へ |
 
 **状態の確定**: approved の知らせ、CI の緑、タイマーの完了は、どれもここに合流する。
 
@@ -126,11 +129,9 @@ pr-relay は PR を 1 分ごとに確かめ、Codex のレビュー、Codex の 
 
 **pr-relay が起こさない事象**: 次は relay モードではセッションを起こさない。ターンを終えた後に起きたものは、時間切れ用タイマーで起こされたとき、または人が `/dev review` で再開したときに、上の「状態の確定」で判定する。
 
-- 利用上限 (pr-relay はトーストで人に知らせるだけ): `signal=usage_limited` なら [REVIEW_INCOMPLETE](#review_incomplete-head-が未レビュー) (`usage-limit`)
+- 利用上限 (pr-relay はトーストで人に知らせるだけ。Auto-fix が on なら CI モニターが上限のコメントを `<ci-monitor-event>` で届けるので、そのときは届いた時点でここに来る): `signal=usage_limited` なら [REVIEW_INCOMPLETE](#review_incomplete-head-が未レビュー) (`usage-limit`)
 - レビューが来ないまま時間が過ぎた: 「状態の確定」の手順 1 の `waiting` の分岐で扱う
 - PR のクローズ (トーストだけ): 再開時に `gh pr view --json state` で確かめ、前提条件 2 に従う
-
-**deny を受けたとき**: 監視中の PR があると、pr-relay は `poll-codex-review.sh --watch` を実行する Bash を「pr-relay is watching … End the turn instead of waiting here.」で deny する (`--watch` なしの 1 回呼び出しは通す)。これを受けたら、再試行も、1 ショットや ScheduleWakeup への切り替えもせず、上の手順 1 の保存を済ませてターンを終える。
 
 ---
 
@@ -631,7 +632,7 @@ GitHub 上のラウンド数は 1 の内訳として見る。ラウンドが減�
 - **返信本文を `--body-file`/`--input` 以外で渡さない** (shell 展開事故)。`mktemp` 動的パス + `head` 検証必須
 - **PR 本文を更新せずに push だけで終えない** (Phase 5-bis ルール、Test plan を落とさない)
 - **`--watch` を前景 Bash で起動しない** (sleep がブロックされる。`run_in_background` 必須)
-- **relay モードで Codex を自分で待たない** (deny を受けた後も同じ。[待ち方](#relay-モード))
+- **relay モードで Codex を自分で待たない** ([待ち方](#relay-モード))
 - **MERGED / CLOSED の PR で監視を始めない** (Phase 6 へ誘導)
 - **push しないラウンドで baseline を進めない**。`review.last_push_at` は push のときだけ動かし、同じ review の再返却は `--processed-reviews` で止める ([手順 8](#8-台帳と-baseline-の更新))
 - **`waiting` 時に `eyes_present` を無視して即 `@codex review` しない**。eyes が残っている間はレビュー進行中なので待機する (二重トリガー防止)
