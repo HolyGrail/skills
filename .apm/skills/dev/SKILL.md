@@ -120,7 +120,7 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 
 以下は本スキルで git 操作を組む際の前提:
 
-1. **Bash 呼び出し間で cwd は保持されない** (`cd` の効果は次の Bash 呼び出しに引き継がれない)。worktree で作業する全コマンドは `cd "$WT_PATH" && ...` を先頭に付けるか、`git -C "$WT_PATH" ...` を使う
+1. **Bash 呼び出し間で cwd は保持される** (`cd` の効果は次の Bash 呼び出しに引き継がれる)。ハーネスが cwd をセッションの作業ディレクトリへ戻すのは、コマンドがセッションの許可ディレクトリの外へ出たときだけで、そのときは出力に `Shell cwd was reset to <path>` が出る。直前の呼び出しの cwd が残るので、worktree と main リポジトリのどちらにいるかを推測で決めない。worktree で作業する全コマンドは `cd "$WT_PATH" && ...` を先頭に付けるか、`git -C "$WT_PATH" ...` を使い、明示したパスで曖昧さを消す。所在の判断が要る場面では `pwd` を出力に含める
 2. **zsh の `git wt` シェル統合は Claude Code の bash では効かない**。`git-wt` サブコマンドを直接呼び、worktree パスは `--json` 出力から取得する
 3. **worktree パス・リポジトリ root は絶対パスで保持する** (セッションファイルに記録)
 
@@ -136,6 +136,7 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 - **`git wt --json <branch>` は list モードでのみ JSON 配列を返す**。作成時 (`git wt <branch> <start-point>`) には付けず、作成後の list で path を引く 2 段階手順を踏む ([phase-0-worktree.md 手順 7](references/phase-0-worktree.md#手順-7-worktree-新規作成))
 - **`wt.copyignored=true` は gitignored なファイルだけ対象**。`.dev.vars` が `.gitignore` 未登録だと copy されない。判定ルールは [phase-0-worktree.md 手順 0](references/phase-0-worktree.md#手順-0-git-wt-前提セットアップの自動チェック)
 - **検証失敗の切り分けで `git checkout` を使わない**。作業状態を壊すリスクがあるので、必ず別 worktree で再実行 ([phases-1-4.md Phase 3](references/phases-1-4.md#phase-3-verify-検証))
+- **「間違った場所を編集した」と思ったら、復旧操作の前に両方の差分を見る**。`cp` や `git checkout --` で戻す前に、worktree と main リポジトリの両方で `git -C <path> status` と `git -C <path> diff --stat` を確認する。diff が空なら、そこは編集されていない。復旧のつもりの `cp` / `git checkout --` は破壊的操作である。cwd が保持されていないと思い込み、worktree に正しく入っていた編集を「main を汚した」と誤診して、main の clean なファイルを worktree へ `cp` し、自分の編集を消した実例がある
 - **PR 作成・更新は常に `--body-file`**。Phase 5 の初回作成は `gh pr create --body-file`、Phase 5-bis の更新は `gh pr edit --body-file`。`--body ""` は事故のもと、`/pr-create` 経由や Claude Code デフォルトの `## Test plan` プレースホルダにフォールバックすると Phase 3 結果と整合しない PR が出る ([phases-5-6.md Phase 5](references/phases-5-6.md#phase-5-pr-プルリクエスト) / [Phase 5-bis](references/phases-5-6.md#phase-5-bis-post-pr-iteration))
 - **計画 issue の作成・本文更新は計画確定後に 1 回で行う**。issue の作成・編集はリポジトリ watcher に通知が飛ぶ外部公開操作。ドラフト段階で issue を作って編集を繰り返さない。issue 起動モードで既存 issue の本文を計画フォーマットに更新するときも、**元の本文を黙って破棄しない** (原文の要素を各節に組み込むか「## 経緯 (原文)」節として保全する)
 - **PR / issue の本文・タイトルは投稿前に cognitive-rhythm-writing で推敲**。`gh pr create/edit`・`gh issue create/edit`（および MCP）で投稿する前に Skill(cognitive-rhythm-writing) を発火させ（PR / issue は人間が読む文章なので japanese-tech-writing 単独より優先。併用規範として japanese-tech-writing も読み込まれる）、`--body-file` に書き出す本文と `--title` を推敲してから投稿する。投稿コマンド実行時には PreToolUse hook (`~/.claude/hooks/jtw-guard.sh`) が推敲済みかを確認する safety net が走る（グローバル CLAUDE.md「日本語文章」を参照）
