@@ -175,9 +175,9 @@ WT_PATH=$(git -C "$REPO_ROOT" wt --json \
 
 - `cd "$WT_PATH" && <コマンド>` を基本形にする
 - 単発の git 操作は `git -C "$WT_PATH" <コマンド>` でも可
-- **`cd` の効果は次の Bash 呼び出しに残る** (cwd は呼び出し間で保持される)。残った cwd に頼って `cd "$WT_PATH" &&` を省かない。直前の呼び出しが別の場所へ `cd` していれば、コマンドはそこで実行される
-- ハーネスが cwd をセッションの作業ディレクトリへ戻すのは、コマンドがセッションの許可ディレクトリの外へ出たときだけ (出力に `Shell cwd was reset to <path>` が出る)。どこにいるかは推測せず、判断が要る場面では `pwd` を出力に含める
-- 「間違った場所を編集した」と思ったら、復旧操作 (`cp` / `git checkout --`) の前に worktree と main リポジトリの両方で `git status --short` と `git diff --stat HEAD` を確認する。stage 済みの変更と未追跡ファイルはこれで拾えるが、gitignored なファイル (`.dev.vars` など) の編集はどちらにも出ないので、対象がそれなら両側を `diff` で直接比べる (SKILL.md の Gotchas 参照)
+- **メインセッションでは、`cd` の効果は既定で次の Bash 呼び出しに残る**。残った cwd に頼って `cd "$WT_PATH" &&` を省かない。直前の呼び出しが別の場所へ `cd` していれば、コマンドはそこで実行される
+- `cd` が残らない場合もある。行き先がプロジェクトディレクトリと追加の作業ディレクトリの外だったとき (出力に `Shell cwd was reset to <dir>` が出る)、`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1` が設定されているとき、subagent のセッション、バックグラウンドに回ったコマンドがそれに当たる (SKILL.md「Claude Code 実行環境の絶対条件」参照)。基本形ならどの場合でも結果は変わらない。どこにいるかは推測せず、判断が要る場面では `pwd` を出力に含める
+- 「間違った場所を編集した」と思ったら、復旧操作 (`cp` / `git checkout --`) の前に worktree と main リポジトリの両方で `git status --short --untracked-files=all` と `git diff --stat HEAD` を確認し、編集がどちらにあるかを確かめる。出力が空でも上書きして安全とは限らない (gitignored なファイルの編集は出ない) ので、上書きの直前に、消える内容を `diff` で出力して読む (SKILL.md の Gotchas 参照)
 
 ## フォールバックと例外時の自動対応
 

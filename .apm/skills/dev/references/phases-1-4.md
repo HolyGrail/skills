@@ -322,7 +322,7 @@ MAIN_WT=$(git -C "$REPO_ROOT" wt --json \
   ```bash
   cd "$MAIN_WT" && <failing-command>
   ```
-- この `cd` は次の Bash 呼び出しにも残る。切り分け後のコマンドは `cd "$WT_PATH" && ...` を付けて作業中の worktree で実行する
+- この `cd` は次の Bash 呼び出しにも残りうる (メインセッションの既定)。切り分け後のコマンドは `cd "$WT_PATH" && ...` を付けて作業中の worktree で実行する
 - worktree は独立しているので、作業中の変更に影響を与えない (stash 不要、冪等)
 - `MAIN_WT` が古い可能性があれば `git -C "$MAIN_WT" pull --ff-only origin "$DEFAULT_BRANCH"` を実行してから切り分ける (ff-only は fast-forward できないとき失敗するだけで作業を壊さないので確認不要)
 
