@@ -177,7 +177,7 @@ WT_PATH=$(git -C "$REPO_ROOT" wt --json \
 - 単発の git 操作は `git -C "$WT_PATH" <コマンド>` でも可
 - **`cd` の効果は次の Bash 呼び出しに残る** (cwd は呼び出し間で保持される)。残った cwd に頼って `cd "$WT_PATH" &&` を省かない。直前の呼び出しが別の場所へ `cd` していれば、コマンドはそこで実行される
 - ハーネスが cwd をセッションの作業ディレクトリへ戻すのは、コマンドがセッションの許可ディレクトリの外へ出たときだけ (出力に `Shell cwd was reset to <path>` が出る)。どこにいるかは推測せず、判断が要る場面では `pwd` を出力に含める
-- 「間違った場所を編集した」と思ったら、復旧操作 (`cp` / `git checkout --`) の前に worktree と main リポジトリの両方で `git status` と `git diff --stat` を確認する (SKILL.md の Gotchas 参照)
+- 「間違った場所を編集した」と思ったら、復旧操作 (`cp` / `git checkout --`) の前に worktree と main リポジトリの両方で `git status --short` と `git diff --stat HEAD` を確認する (stage 済みの変更と未追跡ファイルも拾うため。SKILL.md の Gotchas 参照)
 
 ## フォールバックと例外時の自動対応
 
