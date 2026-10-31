@@ -178,13 +178,14 @@ head -c 300 "$NOTES"      # 意図した本文か目で確認
 
 ```bash
 git tag v1.4.0 "$REL" && git push origin v1.4.0     # タグは REL に打つ。HEAD には打たない
+[ "$(git rev-parse 'v1.4.0^{commit}')" = "$REL" ] || echo "タグが REL を指していない。打ち直す前に報告する"
 gh release create v1.4.0 --draft --title "v1.4.0" --notes-file "$NOTES"
 rm -f "$NOTES"
 # ... assets を添付し、gh release view v1.4.0 で確認してから ...
 gh release edit v1.4.0 --draft=false
 ```
 
-- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、まず workflow が Release 自体を作るかを読む。作るなら `git tag v1.4.0 "$REL" && git push origin v1.4.0` でタグだけ push して CI に任せ、CI が公開まで行うか draft で止まるかに従う。作らない (既存 Release に upload するだけ) なら、タグを push したあと `gh release create v1.4.0 --draft` で draft を作り、CI の upload が終わって `gh release view v1.4.0` で assets を確認してから `--draft=false` にする。draft の Release を先に作ってもタグは push されず CI は動かないので、タグ push を省かない
+- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、まず workflow が Release 自体を作るかを読む。作るなら `git tag v1.4.0 "$REL" && git push origin v1.4.0` でタグだけ push して CI に任せ、CI が公開まで行うか draft で止まるかに従う。作らない (既存 Release に upload するだけ) なら、タグを push したあと `gh release create v1.4.0 --draft` で draft を作り、CI の upload が終わって `gh release view v1.4.0` で assets を確認してから `--draft=false` にする。draft の Release を先に作ってもタグは push されず CI は動かないので、タグ push を省かない。CI が動いたら `gh run list --commit "$REL" --limit 3` で、ノートと同じ `REL` に対して走っていることを確かめる
 - 成果物を手元で作る構成 (Tauri を手動 build) では、`gh release create ... --draft` で作り、`gh release upload v1.4.0 <files>` で添付してから `gh release edit v1.4.0 --draft=false` で公開する
 - ストア配布が主の種別 (Chrome 拡張、iOS) では、GitHub Release は履歴の記録として作る。ストアの審査が通るまで公開したくなければ `--draft` のままにし、その旨を報告に含める
 - release-please 運用では作らない。`gh release list --limit 3` で生成結果を確認する
