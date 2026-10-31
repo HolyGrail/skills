@@ -20,9 +20,9 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 
 ## 収録 Skill / Prompt / Agent
 
-### Skills (24)
+### Skills (26)
 
-`empirical-prompt-tuning` を含む 24 個。
+`empirical-prompt-tuning` を含む 26 個。
 
 | name | 概要 (description 抜粋) |
 |---|---|
@@ -32,11 +32,13 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 | `dev` | git worktree ベースで Plan → Implement → PR → Cleanup までの開発ワークフロー |
 | `empirical-prompt-tuning` | 別エージェントに動かせて両面評価で指示文を反復改善 |
 | `fix-error` | エラーの 3 フェーズ根本原因分析 (情報収集 → 5 Whys → 修正) |
+| `handoff-prompt` | 別環境・別セッション・Codex へ続きを渡す引き継ぎプロンプトを git と PR の実状から生成 |
 | `japanese-tech-writing` | 日本語技術文書の規範 (整形・論証の厳密さ・読み手の負荷・空句の禁止) |
 | `pentest` | OWASP / CWE Top 25 と照合する攻撃者目線レビュー |
 | `plan` | Requirements → Design → Implementation の 3 段階実装計画策定 |
 | `pr-review` | 削除・データフロー破壊を含む 5 分類体系的 PR レビュー |
 | `refactor` | 段階的リファクタリングと SOLID/コードの臭い評価 |
+| `release` | マージ後のバージョン更新・提出物一覧・リリースノート・GitHub Release (ストア提出は人間) |
 | `role` / `role-debate` / `role-help` | 専門ロール切替・ロール間討議・ロール選定支援 |
 | `semantic-commit` | 大きな変更を意味のある最小単位に分割し Conventional Commits でコミット |
 | `spec` | Kiro 式 spec-driven development (requirements/design/tasks) |
@@ -55,7 +57,7 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 | `analyze-performance` | パフォーマンス問題分析と最適化提案 |
 | `check-fact` | コードベース・docs と照合した情報検証 |
 | `check-github-ci` | GitHub Actions CI 状況確認 |
-| `codex` | Codex MCP へのコード生成委任 |
+| `codex` | `codex exec` でのコード生成委任 |
 | `commit-message` | Conventional Commits 準拠のメッセージ生成 |
 | `context7` | Context7 MCP でライブラリ最新ドキュメント検索 |
 | `explain-code` | 多角的なコード解説 |
