@@ -136,6 +136,18 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 ## Phase 4: リリースノート、タグ、GitHub Release
 
+### リリース対象のコミットを確定する
+
+タグもノートも build も、同じ 1 つのコミットを指すようにする。`/release` を動かしている worktree の HEAD は、マージ直前の feature ブランチや release ブランチであることが多く、そこにタグを打つと squash マージ後の `main` と中身がずれる。先に `main` を取り直し、その SHA を以後のすべてで使う。
+
+```bash
+git fetch origin main
+REL=$(git rev-parse origin/main)
+git log -1 --oneline "$REL"             # バージョン更新 PR のマージコミットであることを目で確認
+```
+
+`REL` がバージョン更新 PR のマージコミットでなければ (別の PR が先に入っている、まだマージされていない)、その旨を報告して止まる。
+
 ### リリースノート案
 
 直近タグ以降のマージ済み PR を集め、利用者に見える変更を先に、内部変更を後に並べる。言語は既存の Release に揃える (無ければ日本語)。
@@ -145,7 +157,7 @@ release-please 運用では、ここまでの作業をすべて release-please �
 ```bash
 PREV=$(git describe --tags --abbrev=0)
 # 直近タグ以降の first-parent コミットから PR 番号を取る (squash / merge commit の件名に #番号 が入る)
-git log --first-parent --format=%s "$PREV"..main | grep -oE '#[0-9]+' | sort -u
+git log --first-parent --format=%s "$PREV".."$REL" | grep -oE '#[0-9]+' | sort -u
 # 番号ごとに題名とラベルを取る
 gh pr view 123 --json number,title,labels,url
 ```
@@ -165,13 +177,14 @@ head -c 300 "$NOTES"      # 意図した本文か目で確認
 タグの書式は Phase 1 で控えた既存のものに揃える。Release は draft で作り、assets が揃ったのを確認してから公開する。immutable releases を有効にしたリポジトリでは公開後に assets を足せないので、先に公開すると成果物の無い Release が残る。
 
 ```bash
-gh release create v1.4.0 --draft --title "v1.4.0" --notes-file "$NOTES" --target main
+git tag v1.4.0 "$REL" && git push origin v1.4.0     # タグは REL に打つ。HEAD には打たない
+gh release create v1.4.0 --draft --title "v1.4.0" --notes-file "$NOTES"
 rm -f "$NOTES"
 # ... assets を添付し、gh release view v1.4.0 で確認してから ...
 gh release edit v1.4.0 --draft=false
 ```
 
-- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、まず workflow が Release 自体を作るかを読む。作るなら `git tag v1.4.0 && git push origin v1.4.0` でタグだけ push して CI に任せ、CI が公開まで行うか draft で止まるかに従う。作らない (既存 Release に upload するだけ) なら、タグを push したあと `gh release create v1.4.0 --draft` で draft を作り、CI の upload が終わって `gh release view v1.4.0` で assets を確認してから `--draft=false` にする。draft の Release を先に作ってもタグは push されず CI は動かないので、タグ push を省かない
+- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、まず workflow が Release 自体を作るかを読む。作るなら `git tag v1.4.0 "$REL" && git push origin v1.4.0` でタグだけ push して CI に任せ、CI が公開まで行うか draft で止まるかに従う。作らない (既存 Release に upload するだけ) なら、タグを push したあと `gh release create v1.4.0 --draft` で draft を作り、CI の upload が終わって `gh release view v1.4.0` で assets を確認してから `--draft=false` にする。draft の Release を先に作ってもタグは push されず CI は動かないので、タグ push を省かない
 - 成果物を手元で作る構成 (Tauri を手動 build) では、`gh release create ... --draft` で作り、`gh release upload v1.4.0 <files>` で添付してから `gh release edit v1.4.0 --draft=false` で公開する
 - ストア配布が主の種別 (Chrome 拡張、iOS) では、GitHub Release は履歴の記録として作る。ストアの審査が通るまで公開したくなければ `--draft` のままにし、その旨を報告に含める
 - release-please 運用では作らない。`gh release list --limit 3` で生成結果を確認する
@@ -191,6 +204,7 @@ gh release edit v1.4.0 --draft=false
 - **一覧を先に出す**：ファイルの更新や zip の作成より前に、何を出すかの一覧を提示する。一覧の時点でユーザーが止められるようにする
 - **バージョンは全箇所を同時に**：種別の表にある更新箇所を一度に書き換え、`grep -rn "<旧バージョン>"` で取り残しが無いかを見る
 - **pbxproj を Edit しない**：iOS のバージョンは agvtool か Bash の確定的置換で更新し、置換前後の件数を確認する
+- **タグは `origin/main` の SHA に打つ**：worktree の HEAD に打たない。`git fetch origin main` で取り直した SHA をタグ、ノートの範囲、build のすべてに使う
 - **タグは打ち直さない**：公開済みタグの付け替え (`git tag -f` + force push) はしない。間違えたら次のバージョンで直す
 - **リリース手順書を優先する**：リポジトリに手順書や release タスクがあれば、本 skill の既定手順よりそちらに従う
 - **`--notes-file` は mktemp と head 確認**：固定名の一時ファイルを使わず、投稿直前に中身を確認する
@@ -220,7 +234,8 @@ gh release edit v1.4.0 --draft=false
 /release 0.3.0
 
 # Phase 2: CMakeLists.txt の project VERSION と buildspec.json を 0.3.0 に
-# Phase 4: git push origin 0.3.0 で CI を起動 → workflow が Release を作らなければ draft を作る
+# Phase 4: git fetch origin main で REL を確定 → git tag 0.3.0 "$REL" && git push origin 0.3.0 で CI を起動
+#          → workflow が Release を作らなければ draft を作る
 #          → CI 完了後に assets を確認してから draft を外す
 ```
 
