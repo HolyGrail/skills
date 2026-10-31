@@ -1,6 +1,6 @@
 ---
 description: |
-  MCP の Context7 を使ってライブラリ・フレームワーク・SDK・API・CLI ツールなどの最新技術ドキュメントを検索する。React hooks・TypeScript 型エラー・Next.js 新機能などの公式情報を Web 検索より優先して取得したいときに使う。
+  技術ドキュメントを MCP の Context7 で検索する
 ---
 
 ## Context7

@@ -1,6 +1,6 @@
 ---
 description: |
-  プロジェクトの依存関係を分析しアーキテクチャの健全性を評価する。循環依存・レイヤー違反・Clean Architecture 準拠などを検査して可視化したいとき、または依存関係マトリクスやファンイン/ファンアウトのメトリクスを取得してリファクタリング指針を得たいときに使う。
+  プロジェクトの依存関係を分析し、循環依存や層違反などアーキテクチャの健全性を評価する
 ---
 
 ## Dependency Analysis
@@ -10,7 +10,7 @@ description: |
 ### 使い方
 
 ```bash
-/dependency-analysis [オプション]
+/analyze-dependencies [オプション]
 ```
 
 ### オプション
@@ -24,13 +24,13 @@ description: |
 
 ```bash
 # プロジェクト全体の依存関係分析
-/dependency-analysis
+/analyze-dependencies
 
 # 循環依存の検出
-/dependency-analysis --circular
+/analyze-dependencies --circular
 
 # 特定モジュールの詳細分析
-/dependency-analysis --focus src/core --depth 5
+/analyze-dependencies --focus src/core --depth 5
 ```
 
 ### 分析項目
@@ -91,13 +91,13 @@ description: |
 
 ```bash
 # CI/CD パイプラインでの自動チェック
-/dependency-analysis --circular --fail-on-violation
+/analyze-dependencies --circular --fail-on-violation
 
 # アーキテクチャルールの定義と検証
-/dependency-analysis --rules .architecture-rules.yml
+/analyze-dependencies --rules .architecture-rules.yml
 
 # 時系列での依存関係の変化を追跡
-/dependency-analysis --compare HEAD~10
+/analyze-dependencies --compare HEAD~10
 ```
 
 ### 設定ファイル例 (.dependency-analysis.yml)
@@ -126,7 +126,7 @@ ignore:
 ### 統合ツール
 
 - `madge` : JavaScript/TypeScript の依存関係可視化
-- `dep-cruiser` : 依存関係のルール検証
+- `dependency-cruiser`（CLI は `depcruise`）: 依存関係のルール検証
 - `nx` : モノレポの依存関係管理
 - `plato` : 複雑度と依存関係の統合分析
 

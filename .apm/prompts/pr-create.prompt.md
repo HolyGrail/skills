@@ -1,6 +1,6 @@
 ---
 description: |
-  ブランチ作成・コミット・push・ビルド検証を経て、`.github/PULL_REQUEST_TEMPLATE.md` を完全保持した説明文と最大 3 つの自動ラベルで Draft PR を作成する。実装が完了して型チェック・ビルド・Lint 全 PASS の状態でレビュー前段階の PR を立てたいときに使う。
+  変更を分析して Draft PR を作成する（テンプレート保持、ラベル選択、日本語推敲ゲート付き）
 ---
 
 ## PR Create
@@ -15,7 +15,7 @@ git add . && git commit -m "feat: ユーザー認証機能の実装"
 「変更内容を分析して適切な説明文とラベルで Draft PR を作成してください」
 
 # 既存テンプレート保持での更新
-cp .github/PULL_REQUEST_TEMPLATE.md pr_body.md
+BODY=$(mktemp -t pr-body.XXXXXX); cp .github/PULL_REQUEST_TEMPLATE.md "$BODY"
 「テンプレート構造を完全に保持して変更内容を補完してください」
 
 # 段階的品質向上
@@ -34,9 +34,9 @@ git push -u origin feat-user-profile
 
 # 2. PR 作成
 「以下の手順で PR を作成してください：
-1. git diff --cached で変更内容を確認
+1. git diff main...HEAD で変更内容を確認
 2. .github/PULL_REQUEST_TEMPLATE.md を使用して説明文を作成
-3. 変更内容から適切なラベルを最大 3 個選択
+3. 変更内容に合う既存ラベルを選択
 4. Draft PR として作成（HTML コメント保持）」
 
 # 3. CI 確認後に Ready 化
@@ -100,11 +100,11 @@ git push
 **Step 1: 変更内容の分析**
 
 ```bash
-# ファイル変更の取得（ステージ済み変更を確認）
-git diff --cached --name-only
+# ファイル変更の取得（commit 済みなので staged diff は空。main との差分を見る）
+git diff main...HEAD --name-only
 
 # 内容分析（最大 1000 行）
-git diff --cached | head -1000
+git diff main...HEAD | head -1000
 ```
 
 **Step 2: 説明文の自動生成（ビルド検証 PASS 後）**
@@ -115,40 +115,50 @@ git diff --cached | head -1000
 # 2. .github/PULL_REQUEST_TEMPLATE.md
 # 3. デフォルトテンプレート
 
-cp .github/PULL_REQUEST_TEMPLATE.md pr_body.md
-# HTML コメント・区切り線を保持したまま空セクションのみ補完
+BODY=$(mktemp -t pr-body.XXXXXX)   # 固定名は複数 worktree・セッションで衝突するため mktemp
+cp .github/PULL_REQUEST_TEMPLATE.md "$BODY"
+# "$BODY" を編集し、HTML コメント・区切り線を保持したまま空セクションのみ補完
 ```
+
+**Step 2.5: cognitive-rhythm-writing による文章チェック（PR 作成前の必須ステップ）**
+
+PR のタイトルと本文（日本語部分）を投稿する前に、必ず Skill(cognitive-rhythm-writing) を発火させて推敲する。PR は人間が読む文章なので japanese-tech-writing 単独ではなく cognitive-rhythm-writing を優先する（併用規範として japanese-tech-writing も読み込まれる）。既存テンプレートの HTML コメント・区切り線・既存記述は完全に保持したまま、自分が新規に書き起こした日本語の説明文とタイトルだけを規範に沿って整える。
+
+投稿コマンド実行時には PreToolUse hook (`~/.claude/hooks/jtw-guard.sh`) が推敲済みかを確認する safety net が走る（グローバル CLAUDE.md「日本語文章」を参照）。
 
 **Step 3: ラベルの自動選択**
 
 ```bash
 # 利用可能ラベルの取得（非インタラクティブ）
 「.github/labels.yml または GitHub リポジトリから利用可能なラベルを取得して、変更内容に基づいて適切なラベルを自動選択してください」
-
-# パターンマッチングによる自動選択（最大 3 個）
-# - ドキュメント: *.md, docs/ → documentation|docs
-# - テスト: test, spec → test|testing
-# - バグ修正: fix|bug → bug|fix
-# - 新機能: feat|feature → feature|enhancement
 ```
 
-**Step 4: GitHub API での PR 作成（HTML コメント保持）**
+**Step 4: `gh pr create --body-file` での PR 作成（HTML コメント保持）**
 
 ```bash
-# PR 作成
-「以下の情報で Draft PR を作成してください：
-- タイトル: コミットメッセージから自動生成
-- 説明文: .github/PULL_REQUEST_TEMPLATE.md を使用して適切に記入
-- ラベル: 変更内容から自動選択（最大 3 個）
-- ベースブランチ: main
-- HTML コメントは完全に保持」
+# 投稿直前に中身が意図した本文か確認（別セッションの古い本文を投稿する事故が起きている）
+head -c 300 "$BODY"
+
+# Draft PR 作成。本文はファイル経由で渡す
+gh pr create --draft --base main --title "<コミットメッセージから生成>" --body-file "$BODY" --label "<選択したラベル>"
+
+# 使用後は削除
+rm -f "$BODY"
 ```
+
+作成時の指定:
+
+- タイトル: コミットメッセージから自動生成
+- 説明文: `.github/PULL_REQUEST_TEMPLATE.md` の構造を保って記入
+- ラベル: 変更内容から既存ラベルを選択
+- ベースブランチ: main
+- HTML コメントは完全に保持
 
 **方法 B: GitHub MCP（フォールバック）**
 
 ```javascript
 // HTML コメント保持での PR 作成
-mcp_github_create_pull_request({
+mcp__github__create_pull_request({
   owner: 'organization',
   repo: 'repository',
   base: 'main',
@@ -160,38 +170,19 @@ mcp_github_create_pull_request({
 });
 ```
 
-### 自動ラベル選択システム
+### ラベル選択
 
-#### ファイルパターンベース判定
-
-- **ドキュメント**: `*.md`, `README`, `docs/` → `documentation|docs|doc`
-- **テスト**: `test`, `spec` → `test|testing`
-- **CI/CD**: `.github/`, `*.yml`, `Dockerfile` → `ci|build|infra|ops`
-- **依存関係**: `package.json`, `pubspec.yaml` → `dependencies|deps`
-
-#### 変更内容ベース判定
-
-- **バグ修正**: `fix|bug|error|crash|修正` → `bug|fix`
-- **新機能**: `feat|feature|add|implement|新機能|実装` → `feature|enhancement|feat`
-- **リファクタリング**: `refactor|clean|リファクタ` → `refactor|cleanup|clean`
-- **パフォーマンス**: `performance|perf|optimize` → `performance|perf`
-- **セキュリティ**: `security|secure` → `security`
-
-#### 制約事項
-
-- **最大 3 個まで**: 自動選択の上限
-- **既存ラベルのみ**: 新規作成禁止
-- **部分マッチ**: キーワード含有による判定
+`.github/labels.yml` か `gh label list --limit 200 --json name,description` で既存ラベルを取り、diff の内容に合うものを選ぶ。該当が無ければ付けない。新しいラベルは作らない（ラベルはリポジトリ全体で共有する分類で、PR ごとに増えると体系が崩れるため）。
 
 ### プロジェクトガイドライン
 
 #### 基本姿勢
 
-1. **必ず Draft で開始**: すべての PR は Draft 状態で作成
-2. **段階的品質向上**: Phase 1（基本実装）→ Phase 2（テスト追加）→ Phase 3（ドキュメント更新）
-3. **適切なラベル**: 最大 3 種類のラベルを必ず付与
-4. **テンプレート使用**: `.github/PULL_REQUEST_TEMPLATE.md` を必ず使用
-5. **日本語スペース**: 日本語と半角英数字間に必ず半角スペース
+- Draft で作る（CI とレビュー前に人に通知しないため）
+- ラベルは既存のものから変更内容に合うものを選び、該当が無ければ付けない
+- `.github/PULL_REQUEST_TEMPLATE.md` があればその構造を保って埋める
+- テストと docs はタスクが求める範囲だけ
+- 日本語と半角英数字の間は半角スペース
 
 #### ブランチ命名規則
 
@@ -233,19 +224,19 @@ mcp_github_create_pull_request({
 
 #### HTML コメント保持の対処法
 
-**重要**: GitHub CLI (`gh pr edit`) は HTML コメントを自動エスケープし、シェル処理で `EOF < /dev/null` などの不正な文字列が混入する場合があります。
+本文をコマンドライン引数や heredoc で渡すと、シェル処理で `EOF < /dev/null` などの不正な文字列が混入した事例があります。`--body-file` でファイル経由で渡せば回避できます。
 
 **根本的解決策**:
 
-1. **GitHub API の --field オプション使用**: 適切なエスケープ処理で HTML コメント保持
+1. **`gh pr create --body-file "$BODY"` の使用**: 本文をファイル経由で渡す。`gh api` は日本語推敲の PreToolUse hook の対象外で推敲ゲートを迂回するため使わない
 2. **テンプレート処理の簡素化**: 複雑なパイプ処理やリダイレクトを避ける
-3. **完全保持アプローチ**: HTML コメント削除処理を廃止し、テンプレートを完全保持
+3. **完全保持アプローチ**: HTML コメントは削除せず、テンプレートをそのまま保持する
 
 ### レビューコメント対応
 
 ```bash
 # 変更後の再コミット
-git add .
+git add -p
 git commit -m "fix: レビュー フィードバックに基づく修正"
 git push
 ```
@@ -254,19 +245,17 @@ git push
 
 #### HTML コメント保持の重要性
 
-- **GitHub CLI 制限**: `gh pr edit` は HTML コメントをエスケープ、不正文字列混入
-- **根本的回避策**: GitHub API の `--field` オプションで適切なエスケープ処理
-- **テンプレート完全保持**: HTML コメント削除処理を廃止し、構造を完全維持
+- **引数・heredoc 渡しの問題**: シェル処理で不正文字列が混入した事例がある
+- **根本的回避策**: `--body-file` で本文をファイル経由で渡す（`gh api` は推敲 hook を迂回するため使わない）
+- **テンプレート完全保持**: HTML コメントを削除せず、構造をそのまま維持
 
 #### 自動化の制約
 
-- **新規ラベル禁止**: `.github/labels.yml` 定義外のラベル作成不可
-- **最大 3 ラベル**: 自動選択の上限
 - **既存内容優先**: 手動で記述された内容は一切変更しない
 
 #### 段階的品質向上
 
-- **Draft 必須**: すべての PR は Draft で開始
+- **Draft で開始**: CI とレビューが通る前にレビュアーへ通知しないため
 - **CI 確認**: `gh pr checks` で状態確認
 - **Ready 移行**: 品質確認完了後に `gh pr ready`
 - **テンプレート完全遵守**: プロジェクト固有の構造を維持

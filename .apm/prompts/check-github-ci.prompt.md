@@ -1,6 +1,6 @@
 ---
 description: |
-  `gh pr checks` で GitHub Actions CI の状況を確認し、失敗項目があれば修正方法を提案して全チェック完了まで追跡する。PR 作成・push 後に CI 結果を確認したいとき、マージ前に全ジョブが通っているか検証したいときに使う。
+  PR の GitHub Actions CI の状況を確認し、完了まで待って結果を報告する
 ---
 
 ## GitHub CI 監視
@@ -17,9 +17,11 @@ gh pr checks
 ### 基本例
 
 ```bash
-# PR 作成後の CI 確認
-gh pr create --title "新機能の追加" --body "説明"
-gh pr checks
+# 完了まで待つ（最初の失敗で抜ける。長くかかるときはバックグラウンドで実行）
+gh pr checks --watch --fail-fast
+
+# 失敗したジョブのログ
+gh run view <run-id> --log-failed
 ```
 
 ### Claude との連携

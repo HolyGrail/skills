@@ -1,6 +1,6 @@
 ---
 description: |
-  Git の変更内容を分析して既存 PR の説明文（`.github/PULL_REQUEST_TEMPLATE.md` 構造と HTML コメントを完全保持）と最大 3 つのラベル（`.github/labels.yml` または GitHub API）を自動更新する。実装後に PR 説明・ラベルをまとめて整えたいとき、または `--dry-run` で内容を事前確認したいときに使う。
+  Git の変更内容を分析して、既存 PR の説明文とラベルを更新する
 ---
 
 ## PR Auto Update
@@ -104,30 +104,16 @@ parse_template_structure() {
 **優先順位**:
 
 1. **`.github/labels.yml`**: プロジェクト固有のラベル定義から取得
-2. **GitHub API**: `gh api repos/{OWNER}/{REPO}/labels --jq '.[].name'` で既存ラベルを取得
+2. **GitHub**: `gh label list --limit 200 --json name --jq '.[].name'` で既存ラベルを取得
 
-#### 自動判定ルール
+#### 判定
 
-**ファイルパターンベース**:
-
-- ドキュメント: `*.md`, `README`, `docs/` → `documentation|docs|doc` を含むラベル
-- テスト: `test`, `spec` → `test|testing` を含むラベル  
-- CI/CD: `.github/`, `*.yml`, `Dockerfile` → `ci|build|infra|ops` を含むラベル
-- 依存関係: `package.json`, `pubspec.yaml`, `requirements.txt` → `dependencies|deps` を含むラベル
-
-**変更内容ベース**:
-
-- バグ修正: `fix|bug|error|crash|修正` → `bug|fix` を含むラベル
-- 新機能: `feat|feature|add|implement|新機能|実装` → `feature|enhancement|feat` を含むラベル
-- リファクタリング: `refactor|clean|リファクタ` → `refactor|cleanup|clean` を含むラベル
-- パフォーマンス: `performance|perf|optimize|パフォーマンス` → `performance|perf` を含むラベル
-- セキュリティ: `security|secure|セキュリティ` → `security` を含むラベル
+diff が何を変えたか（バグ修正・新機能・ドキュメント・テスト・CI・依存関係・リファクタリング・性能・セキュリティ）で、取得した既存ラベルから合うものを選ぶ。該当が無ければ付けない。
 
 #### 制約
 
 - **最大 3 個まで**: 自動選択されるラベル数の上限
-- **既存ラベルのみ**: 新しいラベルの作成は禁止
-- **部分マッチ**: ラベル名にキーワードが含まれているかで判定
+- **既存ラベルのみ**: 新しいラベルは作らない（ラベルはリポジトリ全体で共有する分類で、PR ごとに増えると体系が崩れるため）
 
 #### 実際の使用例
 
@@ -144,209 +130,31 @@ grep "^- name:" .github/labels.yml | sed "s/^- name: '\?\([^']*\)'\?/\1/"
 
 ```bash
 # 既存ラベルの一覧取得
-gh api repos/{OWNER}/{REPO}/labels --jq '.[].name'
+gh label list --limit 200 --json name --jq '.[].name'
 
 # 例: bug, enhancement, documentation などの標準的なラベルを使用
 ```
 
 ### 5. 実行フロー
 
+1. **PR の特定**: `--pr` が無ければ `gh pr view --json number --jq .number` で現在のブランチの PR を取る
+2. **変更の把握**: `gh pr diff <番号> --name-only` で全体を見て、説明とラベルの判断に要るファイルの差分を読む
+3. **本文の作成**（`--labels-only` なら飛ばす）: `gh pr view <番号> --json body --jq .body` で現在の本文を取る。書かれている記述は残し、空のセクションとプレースホルダーだけを diff に根拠のある内容で埋める。本文が空なら「テンプレート処理の優先順位」の順で構造を決める
+4. **ラベルの選択**（`--description-only` なら飛ばす）: 「4. ラベルの自動設定」の判定と制約に従う
+5. **更新**: `--dry-run` なら本文とラベルを表示して終える。更新は次の手順で行う（`gh api` は日本語推敲の PreToolUse hook の対象外で推敲ゲートを迂回するため使わない）
+
 ```bash
-#!/bin/bash
-
-# 1. PR の検出・取得
-detect_pr() {
-  if [ -n "$PR_NUMBER" ]; then
-    echo $PR_NUMBER
-  else
-    gh pr list --head $(git branch --show-current) --json number --jq '.[0].number'
-  fi
-}
-
-# 2. 変更内容の分析
-analyze_changes() {
-  local pr_number=$1
-  
-  # ファイル変更の取得
-  gh pr diff $pr_number --name-only
-  
-  # 内容分析
-  gh pr diff $pr_number | head -1000
-}
-
-# 3. 説明文の生成
-generate_description() {
-  local pr_number=$1
-  local changes=$2
-  
-  # 現在の PR 説明を取得
-  local current_body=$(gh pr view $pr_number --json body --jq -r .body)
-  
-  # 既存内容があればそのまま使用
-  if [ -n "$current_body" ]; then
-    echo "$current_body"
-  else
-    # テンプレートから新規生成
-    local template_file=".github/PULL_REQUEST_TEMPLATE.md"
-    if [ -f "$template_file" ]; then
-      generate_from_template "$(cat "$template_file")" "$changes"
-    else
-      generate_from_template "" "$changes"
-    fi
-  fi
-}
-
-# テンプレートからの生成
-generate_from_template() {
-  local template="$1"
-  local changes="$2"
-  
-  if [ -n "$template" ]; then
-    # テンプレートをそのまま使用（HTML コメント保持）
-    echo "$template"
-  else
-    # デフォルトフォーマットで生成
-    echo "## What does this change?"
-    echo ""
-    echo "$changes"
-  fi
-}
-
-# 4. ラベルの決定
-determine_labels() {
-  local changes=$1
-  local file_list=$2
-  local pr_number=$3
-  
-  # 利用可能なラベルを取得
-  local available_labels=()
-  if [ -f ".github/labels.yml" ]; then
-    # labels.yml からラベル名を抽出
-    available_labels=($(grep "^- name:" .github/labels.yml | sed "s/^- name: '\?\([^']*\)'\?/\1/"))
-  else
-    # GitHub API からラベルを取得
-    local repo_info=$(gh repo view --json owner,name)
-    local owner=$(echo "$repo_info" | jq -r .owner.login)
-    local repo=$(echo "$repo_info" | jq -r .name)
-    available_labels=($(gh api "repos/$owner/$repo/labels" --jq '.[].name'))
-  fi
-  
-  local suggested_labels=()
-  
-  # 汎用的なパターンマッチング
-  analyze_change_patterns "$file_list" "$changes" available_labels suggested_labels
-  
-  # 最大 3 個に制限
-  echo "${suggested_labels[@]:0:3}"
-}
-
-# 変更パターンからラベルを決定
-analyze_change_patterns() {
-  local file_list="$1"
-  local changes="$2"
-  local -n available_ref=$3
-  local -n suggested_ref=$4
-  
-  # ファイルタイプによる判定
-  if echo "$file_list" | grep -q "\.md$\|README\|docs/"; then
-    add_matching_label "documentation\|docs\|doc" available_ref suggested_ref
-  fi
-  
-  if echo "$file_list" | grep -q "test\|spec"; then
-    add_matching_label "test\|testing" available_ref suggested_ref
-  fi
-  
-  # 変更内容による判定
-  if echo "$changes" | grep -iq "fix\|bug\|error\|crash\|修正"; then
-    add_matching_label "bug\|fix" available_ref suggested_ref
-  fi
-  
-  if echo "$changes" | grep -iq "feat\|feature\|add\|implement\|新機能\|実装"; then
-    add_matching_label "feature\|enhancement\|feat" available_ref suggested_ref
-  fi
-}
-
-# マッチするラベルを追加
-add_matching_label() {
-  local pattern="$1"
-  local -n available_ref=$2
-  local -n suggested_ref=$3
-  
-  # すでに 3 個ある場合はスキップ
-  if [ ${#suggested_ref[@]} -ge 3 ]; then
-    return
-  fi
-  
-  # パターンにマッチする最初のラベルを追加
-  for available_label in "${available_ref[@]}"; do
-    if echo "$available_label" | grep -iq "$pattern"; then
-      # 重複チェック
-      local already_exists=false
-      for existing in "${suggested_ref[@]}"; do
-        if [ "$existing" = "$available_label" ]; then
-          already_exists=true
-          break
-        fi
-      done
-      
-      if [ "$already_exists" = false ]; then
-        suggested_ref+=("$available_label")
-        return
-      fi
-    fi
-  done
-}
-
-# 旧関数の互換性のため残しておく
-find_and_add_label() {
-  add_matching_label "$@"
-}
-
-# 5. PR の更新
-update_pr() {
-  local pr_number=$1
-  local description="$2"
-  local labels="$3"
-  
-  if [ "$DRY_RUN" = "true" ]; then
-    echo "=== DRY RUN ==="
-    echo "Description:"
-    echo "$description"
-    echo "Labels: $labels"
-  else
-    # リポジトリ情報を取得
-    local repo_info=$(gh repo view --json owner,name)
-    local owner=$(echo "$repo_info" | jq -r .owner.login)
-    local repo=$(echo "$repo_info" | jq -r .name)
-    
-    # GitHub API を使用して本文を更新（HTML コメント保持）
-    # JSON エスケープを適切に処理
-    local escaped_body=$(echo "$description" | jq -R -s .)
-    gh api \
-      --method PATCH \
-      "/repos/$owner/$repo/pulls/$pr_number" \
-      --field body="$description"
-    
-    # ラベルは通常の gh コマンドで問題なし
-    if [ -n "$labels" ]; then
-      gh pr edit $pr_number --add-label "$labels"
-    fi
-  fi
-}
-```
-
-## 設定ファイル（今後の拡張用）
-
-`~/.claude/pr-auto-update.config`:
-
-```json
-{
-  "language": "ja",
-  "max_labels": 3
-}
+BODY=$(mktemp -t pr-body.XXXXXX)
+# 生成した本文を "$BODY" に書く
+head -c 300 "$BODY"   # 投稿直前に中身が意図した本文か確認
+gh pr edit <番号> --body-file "$BODY"
+rm -f "$BODY"
+gh pr edit <番号> --add-label "<ラベル1>,<ラベル2>"
 ```
 
 ## よくあるパターン
+
+例示（節の立て方の参考）。項目は diff と CI 結果に根拠があるものだけ書き、根拠の無い節は削る。
 
 ### Flutter プロジェクト
 
@@ -424,13 +232,9 @@ GitHub Actions ワークフローを改善しました。{効果}を実現しま
 3. **ラベル制約**:
    - `.github/labels.yml` が存在すれば優先使用
    - 存在しない場合は GitHub API から既存ラベルを取得
-   - 新しいラベルの作成は禁止
    - 最大 3 個まで自動選択
 
-4. **安全な更新**:
-   - `--dry-run` で事前確認を推奨
-   - 機密情報を含む変更の場合は警告表示
-   - バックアップとして元の説明を保存
+4. **安全な更新**: `--dry-run` で生成内容を先に確認できる
 
 5. **一貫性の維持**:
    - プロジェクトの既存 PR スタイルに合わせる
@@ -444,22 +248,14 @@ GitHub Actions ワークフローを改善しました。{効果}を実現しま
 1. **PR が見つからない**: ブランチ名と PR の関連付けを確認
 2. **権限エラー**: GitHub CLI の認証状態を確認
 3. **ラベルが設定できない**: リポジトリの権限を確認
-4. **HTML コメントがエスケープされる**: GitHub CLI の仕様により `<!-- -->` が `&lt;!-- --&gt;` に変換される
+4. **HTML コメントが崩れる**: 本文を引数や heredoc で渡している。`--body-file` に切り替える
 
-### GitHub CLI の HTML コメントエスケープ問題
+### 本文の渡し方で起きる文字化け
 
-**重要**: GitHub CLI (`gh pr edit`) は HTML コメントを自動エスケープします。また、シェルのリダイレクト処理で `EOF < /dev/null` などの不正な文字列が混入する場合があります。
+本文をコマンドライン引数や heredoc で渡すと、シェルのリダイレクト処理で `EOF < /dev/null` などの不正な文字列が混入した事例があります。`--body-file` でファイル経由で渡せば回避できます。
 
 #### 根本的解決策
 
-1. **GitHub API の --field オプション使用**: `--field` を使用して適切なエスケープ処理
+1. **`gh pr edit --body-file "$BODY"` の使用**: 本文をファイル経由で渡す。`gh api` は日本語推敲の PreToolUse hook の対象外で推敲ゲートを迂回するため使わない
 2. **シェル処理の簡素化**: 複雑なリダイレクトやパイプ処理を避ける
-3. **テンプレート処理の単純化**: HTML コメント除去処理を廃止し、完全保持
-4. **JSON エスケープの適切な処理**: 特殊文字を正しく処理
-
-### デバッグオプション
-
-```bash
-# 詳細ログ出力（実装時に追加）
-/pr-auto-update --verbose
-```
+3. **テンプレート処理の単純化**: HTML コメントは除去せず、そのまま保持

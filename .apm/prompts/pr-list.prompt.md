@@ -1,6 +1,6 @@
 ---
 description: |
-  `gh pr list` でオープン PR（Draft 除外）を取得し、コミットタイプ（fix/release/feat 等）と DO NOT MERGE 状態から優先度（高/中/低）別に最大 30 件をレビュー件数・追加削除行数付きで一覧表示する。レビュー対象の PR を整理したいときに使う。
+  現在のリポジトリのオープン PR 一覧を優先順位付きで表示する
 ---
 
 ## PR List
@@ -32,7 +32,7 @@ gh pr list --state open --draft=false --json number,title,author,createdAt,addit
 オープン PR 一覧（優先順位順）
 
 ### 高優先度
-#番号 タイトル [Draft/DNM] | 作者 | オープンから経過時間 | Approved 数 | +追加/-削除
+#番号 タイトル [DNM] | 作者 | オープンから経過時間 | Approved 数 | +追加/-削除
       ├─ 概要 1 行目
       └─ 概要 2 行目
       https://github.com/owner/repo/pull/番号
@@ -60,7 +60,6 @@ gh pr list --state open --draft=false --json number,title,author,createdAt,addit
 **低優先度**
 
 - DO NOT MERGE を含む PR
-- Draft で `test:`、`build:`、`perf:` の PR
 
 ### 注意事項
 
