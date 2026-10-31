@@ -96,13 +96,36 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 ## Phase 3: 提出物一覧の提示 (既定の流れ)
 
-**まず一覧を提示し、提出はユーザーが行う**。一覧には「ファイルの場所」「作り方」「まだ無いもの」を分けて書く。無いものを先回りして作らず、作るかどうかを一覧の中で問う。
+**まず一覧を提示し、提出はユーザーが行う**。一覧には「ファイルの場所」「作り方」「まだ無いもの」を分けて書く。無いものを先回りして作らず、作るかどうかを一覧の中で問う。作ると決めた提出物は、次の節で確定する `REL` のチェックアウトから作る。
+
+### リリース対象のコミットを確定する
+
+タグもノートも build も、同じ 1 つのコミットを指すようにする。`/release` を動かしている worktree の HEAD は、マージ直前の feature ブランチや release ブランチであることが多く、そこで build したりタグを打ったりすると、squash マージ後の `main` と中身がずれる。提出物を作る前に `main` を取り直し、その SHA を以後のすべてで使う。
+
+```bash
+git fetch origin main
+REL=$(git rev-parse origin/main)
+git log -1 --oneline "$REL"             # バージョン更新 PR のマージコミットであることを目で確認
+```
+
+`REL` がバージョン更新 PR のマージコミットでなければ (別の PR が先に入っている、まだマージされていない)、その旨を報告して止まる。
+
+手元で build する提出物 (Chrome 拡張の zip、Tauri のインストーラ、iOS のアーカイブ) は、`REL` をチェックアウトした場所で作る。いまの worktree で作ると、HEAD が `REL` と違うときに古い版のファイルや未マージの変更が成果物に混ざる。
+
+```bash
+BUILD=$(mktemp -d -t release-build.XXXXXX)
+git worktree add --detach "$BUILD" "$REL"
+# ... $BUILD の中で依存の取得と build を行い、成果物を取り出したら ...
+git worktree remove --force "$BUILD"
+```
+
+いまの worktree の HEAD が `REL` と一致し、`git status --short` が空なら、その場で build してよい。
 
 ### Chrome Web Store
 
 | 提出物 | 要件 | 作り方 / 置き場所 |
 |---|---|---|
-| 拡張の zip | `manifest.json` が zip のルート直下。`node_modules`、ソースマップ、`.git` を含めない | `npm run build` 後に `rm -f release/<name>-<version>.zip && (cd dist && zip -r ../release/<name>-<version>.zip .)`。`zip` は既存の zip に追記するので、同じ版を作り直すときに古いファイルが残らないよう先に消す。中身を `unzip -l` で確認する |
+| 拡張の zip | `manifest.json` が zip のルート直下。`node_modules`、ソースマップ、`.git` を含めない | `REL` のチェックアウトで `npm run build` したあと、`rm -f release/<name>-<version>.zip && (cd dist && zip -r ../release/<name>-<version>.zip .)`。`zip` は既存の zip に追記するので、同じ版を作り直すときに古いファイルが残らないよう先に消す。中身を `unzip -l` で確認する |
 | 説明文 (日本語・英語) | 概要は 132 字以内、詳細説明は 16,000 字以内。ストアの言語ごとに入力する | `store/description.ja.md`、`store/description.en.md` があればそれを更新、無ければ README から下書きを作る |
 | スクリーンショット | 1280×800 または 640×400、1〜5 枚、JPEG か 24-bit PNG (アルファ無し) | `store/screenshots/` を探す。無ければ撮影が必要と記す |
 | 小型プロモーションタイル | 440×280、JPEG か 24-bit PNG | `store/promo-440x280.png`。無ければ「任意だが掲載面が増える」と記す |
@@ -114,7 +137,7 @@ release-please 運用では、ここまでの作業をすべて release-please �
 ### Tauri 2 (Windows 配布)
 
 - `npm run tauri build` (または `cargo tauri build`) の成果物: `src-tauri/target/release/bundle/msi/*.msi`、`bundle/nsis/*-setup.exe`
-- 成果物のファイル名にバージョンが入るので、Phase 2 のあとに build する
+- 成果物のファイル名にバージョンが入るので、Phase 2 のあと、`REL` のチェックアウトで build する
 - 配布は GitHub Release の assets。updater を使っていれば `latest.json` も assets に含める。`createUpdaterArtifacts` が作るのはインストーラと `.sig` の署名ファイルまでで、`latest.json` は作らない。CI で tauri-action を使っていればそれが生成する。手元で build したときは、version、platform ごとのダウンロード URL、`.sig` の中身を組み合わせて自分で書き、assets に添付する
 - macOS の dmg、署名、公証はこの skill では扱わない。準備中のプロジェクトでは「macOS 向け成果物は未対応」と一覧に明記する
 
@@ -136,17 +159,7 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 ## Phase 4: リリースノート、タグ、GitHub Release
 
-### リリース対象のコミットを確定する
-
-タグもノートも build も、同じ 1 つのコミットを指すようにする。`/release` を動かしている worktree の HEAD は、マージ直前の feature ブランチや release ブランチであることが多く、そこにタグを打つと squash マージ後の `main` と中身がずれる。先に `main` を取り直し、その SHA を以後のすべてで使う。
-
-```bash
-git fetch origin main
-REL=$(git rev-parse origin/main)
-git log -1 --oneline "$REL"             # バージョン更新 PR のマージコミットであることを目で確認
-```
-
-`REL` がバージョン更新 PR のマージコミットでなければ (別の PR が先に入っている、まだマージされていない)、その旨を報告して止まる。
+`REL` は Phase 3 で確定した値をそのまま使う。Phase 3 を飛ばした (`--notes` など) ときは、Phase 3 の手順で `REL` を先に確定する。
 
 ### リリースノート案
 
@@ -205,7 +218,7 @@ gh release edit v1.4.0 --draft=false
 - **一覧を先に出す**：ファイルの更新や zip の作成より前に、何を出すかの一覧を提示する。一覧の時点でユーザーが止められるようにする
 - **バージョンは全箇所を同時に**：種別の表にある更新箇所を一度に書き換え、`grep -rn "<旧バージョン>"` で取り残しが無いかを見る
 - **pbxproj を Edit しない**：iOS のバージョンは agvtool か Bash の確定的置換で更新し、置換前後の件数を確認する
-- **タグは `origin/main` の SHA に打つ**：worktree の HEAD に打たない。`git fetch origin main` で取り直した SHA をタグ、ノートの範囲、build のすべてに使う
+- **タグも build も `origin/main` の SHA で**：worktree の HEAD に打たず、HEAD で build しない。`git fetch origin main` で取り直した SHA をタグ、ノートの範囲、build のすべてに使い、手元 build はその SHA をチェックアウトした一時 worktree で行う
 - **タグは打ち直さない**：公開済みタグの付け替え (`git tag -f` + force push) はしない。間違えたら次のバージョンで直す
 - **リリース手順書を優先する**：リポジトリに手順書や release タスクがあれば、本 skill の既定手順よりそちらに従う
 - **`--notes-file` は mktemp と head 確認**：固定名の一時ファイルを使わず、投稿直前に中身を確認する
@@ -227,7 +240,8 @@ gh release edit v1.4.0 --draft=false
 # 期待される動作
 # Phase 2: manifest.json と package.json の version を 1.4.0 に更新
 #          → release/1.4.0 ブランチで /pr-create → マージ待ち
-# Phase 3: npm run build → dist/ を zip 化、unzip -l で中身を確認
+# Phase 3: git fetch origin main で REL を確定 → REL の一時 worktree で npm run build
+#          → dist/ を zip 化、unzip -l で中身を確認
 # Phase 4: リリースノート案 → gh release create v1.4.0 --draft
 #          → 完了報告: zip の場所、入力する説明文、ユーザーが行うストア提出の手順
 
@@ -235,7 +249,8 @@ gh release edit v1.4.0 --draft=false
 /release 0.3.0
 
 # Phase 2: CMakeLists.txt の project VERSION と buildspec.json を 0.3.0 に
-# Phase 4: git fetch origin main で REL を確定 → git tag 0.3.0 "$REL" && git push origin 0.3.0 で CI を起動
+# Phase 3: git fetch origin main で REL を確定 (CI が build するので手元 build なし)
+# Phase 4: git tag 0.3.0 "$REL" && git push origin 0.3.0 で CI を起動
 #          → workflow が Release を作らなければ draft を作る
 #          → CI 完了後に assets を確認してから draft を外す
 ```
