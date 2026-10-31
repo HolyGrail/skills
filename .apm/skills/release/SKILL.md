@@ -162,14 +162,16 @@ head -c 300 "$NOTES"      # 意図した本文か目で確認
 
 ### タグと Release
 
-タグの書式は Phase 1 で控えた既存のものに揃える。`gh release create` はタグが無ければ作るので、別に `git tag` する必要はない。
+タグの書式は Phase 1 で控えた既存のものに揃える。Release は draft で作り、assets が揃ったのを確認してから公開する。immutable releases を有効にしたリポジトリでは公開後に assets を足せないので、先に公開すると成果物の無い Release が残る。
 
 ```bash
-gh release create v1.4.0 --title "v1.4.0" --notes-file "$NOTES" --target main
+gh release create v1.4.0 --draft --title "v1.4.0" --notes-file "$NOTES" --target main
 rm -f "$NOTES"
+# ... assets を添付し、gh release view v1.4.0 で確認してから ...
+gh release edit v1.4.0 --draft=false
 ```
 
-- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、`--draft` にせず作成して CI を起動する。成果物の添付を待ってから `gh release view v1.4.0` で assets を確認する
+- CI がタグ push で成果物を作る構成 (OBS、Tauri の一部) では、まず workflow が Release 自体を作るかを読む。作るなら `git tag v1.4.0 && git push origin v1.4.0` でタグだけ push して CI に任せ、CI が公開まで行うか draft で止まるかに従う。作らない (既存 Release に upload するだけ) なら、タグを push したあと `gh release create v1.4.0 --draft` で draft を作り、CI の upload が終わって `gh release view v1.4.0` で assets を確認してから `--draft=false` にする。draft の Release を先に作ってもタグは push されず CI は動かないので、タグ push を省かない
 - 成果物を手元で作る構成 (Tauri を手動 build) では、`gh release create ... --draft` で作り、`gh release upload v1.4.0 <files>` で添付してから `gh release edit v1.4.0 --draft=false` で公開する
 - ストア配布が主の種別 (Chrome 拡張、iOS) では、GitHub Release は履歴の記録として作る。ストアの審査が通るまで公開したくなければ `--draft` のままにし、その旨を報告に含める
 - release-please 運用では作らない。`gh release list --limit 3` で生成結果を確認する
@@ -218,7 +220,8 @@ rm -f "$NOTES"
 /release 0.3.0
 
 # Phase 2: CMakeLists.txt の project VERSION と buildspec.json を 0.3.0 に
-# Phase 4: gh release create 0.3.0 (draft にしない) → CI 完了後に assets を確認
+# Phase 4: git push origin 0.3.0 で CI を起動 → workflow が Release を作らなければ draft を作る
+#          → CI 完了後に assets を確認してから draft を外す
 ```
 
 ## 関連スキル
