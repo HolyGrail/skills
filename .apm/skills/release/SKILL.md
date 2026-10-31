@@ -102,7 +102,7 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 | 提出物 | 要件 | 作り方 / 置き場所 |
 |---|---|---|
-| 拡張の zip | `manifest.json` が zip のルート直下。`node_modules`、ソースマップ、`.git` を含めない | `npm run build` 後に `cd dist && zip -r ../release/<name>-<version>.zip .`。zip の中身を `unzip -l` で確認する |
+| 拡張の zip | `manifest.json` が zip のルート直下。`node_modules`、ソースマップ、`.git` を含めない | `npm run build` 後に `rm -f release/<name>-<version>.zip && (cd dist && zip -r ../release/<name>-<version>.zip .)`。`zip` は既存の zip に追記するので、同じ版を作り直すときに古いファイルが残らないよう先に消す。中身を `unzip -l` で確認する |
 | 説明文 (日本語・英語) | 概要は 132 字以内、詳細説明は 16,000 字以内。ストアの言語ごとに入力する | `store/description.ja.md`、`store/description.en.md` があればそれを更新、無ければ README から下書きを作る |
 | スクリーンショット | 1280×800 または 640×400、1〜5 枚、JPEG か 24-bit PNG (アルファ無し) | `store/screenshots/` を探す。無ければ撮影が必要と記す |
 | 小型プロモーションタイル | 440×280、JPEG か 24-bit PNG | `store/promo-440x280.png`。無ければ「任意だが掲載面が増える」と記す |
@@ -155,7 +155,7 @@ git log -1 --oneline "$REL"             # バージョン更新 PR のマージ�
 対象の PR はコミットの範囲 (直近タグから `main` まで) で決める。マージ日時による検索は、前回タグと同じ日にマージされた PR を二重に拾うので、範囲の外の候補を探すときにだけ使う。
 
 ```bash
-PREV=$(git describe --tags --abbrev=0)
+PREV=$(git describe --tags --abbrev=0 "$REL")   # HEAD ではなく REL から辿る。古い worktree だと HEAD 起点では直近タグを取り逃す
 # 直近タグ以降の first-parent コミットから PR 番号を取る (squash / merge commit の件名に #番号 が入る)
 git log --first-parent --format=%s "$PREV".."$REL" | grep -oE '#[0-9]+' | sort -u
 # 番号ごとに題名とラベルを取る
