@@ -471,7 +471,7 @@ rm -f "$REPLY"
 
 - `$COMMENT_ID` は返信先トップレベルコメントの `id`
 - 短い定型文 (`@codex review` 等の PR 全体コメント) は `gh pr comment "$PR_URL" --body "@codex review"` でよい (PR 本体コメント。長文なら `--body-file`)
-- 代替: MCP `mcp__plugin_github_github__add_reply_to_pull_request_comment` でも返信可能 (gh が使えない環境)
+- 代替: MCP `mcp__github__add_reply_to_pull_request_comment` でも返信可能 (gh が使えない環境)
 
 返信内容の原則 (`/pr-feedback` の返信テンプレート準拠):
 - **fix**: 「ご指摘ありがとうございます。<失敗の条件> に対して <不変条件を回復する変更> を入れました。同型の <箇所> も同じ commit で直しています。コミット `<sha>` で対応しました。」提案コードをそのまま採ったときも「ご提案どおり」ではなく、何が直るのかを書く

@@ -20,17 +20,19 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 
 ## 収録 Skill / Prompt / Agent
 
-### Skills (20)
+### Skills (24)
 
-`empirical-prompt-tuning` を含む 20 個。
+`empirical-prompt-tuning` を含む 24 個。
 
 | name | 概要 (description 抜粋) |
 |---|---|
 | `check-prompt` | AI Agent 向けプロンプトを 6 カテゴリ・100 点満点で評価し改善案を提示 |
+| `cognitive-rhythm-writing` | 説明文の緩急を認知モードの切替と未回収の緊張として設計する文章規範 |
 | `design-patterns` | GoF パターン提案と SOLID/アンチパターン評価 |
 | `dev` | git worktree ベースで Plan → Implement → PR → Cleanup までの開発ワークフロー |
 | `empirical-prompt-tuning` | 別エージェントに動かせて両面評価で指示文を反復改善 |
 | `fix-error` | エラーの 3 フェーズ根本原因分析 (情報収集 → 5 Whys → 修正) |
+| `japanese-tech-writing` | 日本語技術文書の規範 (整形・論証の厳密さ・読み手の負荷・空句の禁止) |
 | `pentest` | OWASP / CWE Top 25 と照合する攻撃者目線レビュー |
 | `plan` | Requirements → Design → Implementation の 3 段階実装計画策定 |
 | `pr-review` | 削除・データフロー破壊を含む 5 分類体系的 PR レビュー |
@@ -41,7 +43,9 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 | `spec-new` / `spec-interview` / `spec-review` | spec の新規作成 / 深掘り / 曖昧さゼロまでのレビュー |
 | `task` | 自律エージェントによる多ソース反復調査 |
 | `tech-debt` | 技術的負債の優先度付き改善計画 |
+| `test-audit` | テスト追加・変更時の品質ゲートと低価値テストの監査・整理 |
 | `ultrathink` | 構造化された MECE 深思考プロセス |
+| `x-research` | X (Twitter) の実データ調査を grok build CLI に委譲 |
 
 ### Prompts (18)
 

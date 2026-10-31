@@ -224,9 +224,6 @@ Phase 3 (Verify) に進む前に以下を **全て満たすこと**。1 つで�
 
 ## 関連スキル
 
-- `/plan` : 計画策定のみ (Phase 1 相当)
 - `/pr-create` : PR 作成のみ (Phase 5 相当)
-- `/spec` : 仕様駆動開発 (より大規模な機能向け)
-- `/spec-new` : ゼロからの仕様策定
 - `/simplify` : Phase 2 の最後に呼ばれるリファクタリング
 - `/pr-feedback` : Phase 5.5 のコメント分類体系 (must/imo/nits/q) と返信テンプレートの参照元
