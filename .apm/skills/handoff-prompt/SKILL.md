@@ -60,8 +60,11 @@ description: |
    git branch --show-current
    git status --short
    git log --oneline -5
-   git log --oneline origin/main..HEAD        # 未 push の有無
+   git fetch -q
+   git log --oneline '@{push}..HEAD'          # 未 push のコミット (push 先の追跡ブランチと比べる)
    ```
+
+   未 push の判定は push 先 (`@{push}`、通常は `origin/<branch>`) と比べる。`origin/main..HEAD` と比べると、push 済みの feature ブランチでも全コミットが未 push に見える。`@{push}` が無い (upstream 未設定か一度も push していない) ときは `git log` がエラーを返すので、現状節には「リモートブランチなし。全コミットが未 push」と書く
 
 2. **PR と issue を取る**
 

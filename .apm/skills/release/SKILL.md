@@ -115,7 +115,7 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 - `npm run tauri build` (または `cargo tauri build`) の成果物: `src-tauri/target/release/bundle/msi/*.msi`、`bundle/nsis/*-setup.exe`
 - 成果物のファイル名にバージョンが入るので、Phase 2 のあとに build する
-- 配布は GitHub Release の assets。updater を使っていれば `latest.json` も assets に含める (生成は tauri の `createUpdaterArtifacts` 設定に従う)
+- 配布は GitHub Release の assets。updater を使っていれば `latest.json` も assets に含める。`createUpdaterArtifacts` が作るのはインストーラと `.sig` の署名ファイルまでで、`latest.json` は作らない。CI で tauri-action を使っていればそれが生成する。手元で build したときは、version、platform ごとのダウンロード URL、`.sig` の中身を組み合わせて自分で書き、assets に添付する
 - macOS の dmg、署名、公証はこの skill では扱わない。準備中のプロジェクトでは「macOS 向け成果物は未対応」と一覧に明記する
 
 ### OBS プラグイン
@@ -140,11 +140,17 @@ release-please 運用では、ここまでの作業をすべて release-please �
 
 直近タグ以降のマージ済み PR を集め、利用者に見える変更を先に、内部変更を後に並べる。言語は既存の Release に揃える (無ければ日本語)。
 
+対象の PR はコミットの範囲 (直近タグから `main` まで) で決める。マージ日時による検索は、前回タグと同じ日にマージされた PR を二重に拾うので、範囲の外の候補を探すときにだけ使う。
+
 ```bash
 PREV=$(git describe --tags --abbrev=0)
-gh pr list --state merged --base main --search "merged:>=$(git log -1 --format=%cs "$PREV")" \
-  --json number,title,labels,url --limit 100
+# 直近タグ以降の first-parent コミットから PR 番号を取る (squash / merge commit の件名に #番号 が入る)
+git log --first-parent --format=%s "$PREV"..main | grep -oE '#[0-9]+' | sort -u
+# 番号ごとに題名とラベルを取る
+gh pr view 123 --json number,title,labels,url
 ```
+
+件名に PR 番号が無いコミットが混ざるときは、`gh pr list --state merged --base main --search "merged:>=<直近タグの日時 ISO 8601>"` を候補一覧として使い、`git merge-base --is-ancestor <マージコミット> "$PREV"` で前回タグに含まれるものを除いてから採用する。
 
 ノートは `mktemp` で取ったファイルに書き、投稿の直前に中身を確認する。固定名の `/tmp/notes.md` を使うと、別セッションが残した古い本文をそのまま投稿しかねない。
 
