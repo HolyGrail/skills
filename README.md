@@ -20,12 +20,13 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 
 ## 収録 Skill / Prompt / Agent
 
-### Skills (26)
+### Skills (27)
 
-`empirical-prompt-tuning` を含む 26 個。
+`empirical-prompt-tuning` を含む 27 個。
 
 | name | 概要 (description 抜粋) |
 |---|---|
+| `archive-deliverables` | コミットしない成果物を同期フォルダの `<repo>/<kind>/<日付>-<slug>/` に final / brief / work と台帳付きで保存 |
 | `check-prompt` | AI Agent 向けプロンプトを 6 カテゴリ・100 点満点で評価し改善案を提示 |
 | `cognitive-rhythm-writing` | 説明文の緩急を認知モードの切替と未回収の緊張として設計する文章規範 |
 | `design-patterns` | GoF パターン提案と SOLID/アンチパターン評価 |
