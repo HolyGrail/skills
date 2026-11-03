@@ -129,7 +129,16 @@ test -z "$(find "$B" -type l)" || echo "束の中に symlink がある"
 
 1. 同期が終わったことを本人に同期クライアントの表示で見てもらう (Dropbox なら Finder のアイコンが緑のチェック)。同期状態を xattr やコマンドで確かに読む方法は見つけていない (未確認)
 2. 元リポジトリを基準に `TRACKED="$(git -C "$REPO_DIR" ls-files -- "$SRC")" && test -z "$TRACKED"` が真になることを確かめる。1 行でも出れば tracked のファイルが混ざっているので削除しない。`git status --short` は変更のない tracked ファイルを表示しないため、`??` だけを見ても混在は分からない。また手順 4 のあとは作業ディレクトリが束の側に移っていることがあり、そこで `git ls-files` を実行するとリポジトリ外で exit 128 を返して出力が空になる。空出力だけで判定せず、`git -C "$REPO_DIR"` で元リポジトリを指し、終了コードも見る
-3. `rm -rf "$SRC"` を実行し、`git status --short` が空になったことを示す
+3. 対応表にあるファイルだけを消し、空になったフォルダを畳む。`rm -rf "$SRC"` は使わない。手順 1 で除外した `.env` などの秘密のファイルは対応表に無く、束にも写っていないので、フォルダごと消すとその唯一の実体を失う
+
+   ```bash
+   while IFS=$'\t' read -r src kind dst; do rm -f -- "$src"; done < "$MAP"
+   find "$SRC" -name .DS_Store -delete
+   find "$SRC" -type d -empty -delete
+   test -e "$SRC" && find "$SRC" -type f          # 残ったものを本人に見せ、1 件ずつ扱いを聞く
+   ```
+
+4. `git status --short` で対象が消えたことを示す。残ったファイルがあれば、その一覧も添える
 
 `.git/info/exclude` に対象を足せば `??` を消せるが、worktree では共通ディレクトリ側に効いて全 worktree で隠れる。既定にはせず、本人が望んだときだけ行う。
 
