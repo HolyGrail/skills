@@ -66,8 +66,11 @@ KIND=marketing; SLUG=spring-campaign
 B="$ROOT/$REPO/$KIND/$(date +%F)-$SLUG"
 test -n "$ROOT" -a -d "$ROOT" || { echo "DELIVERABLE_ARCHIVE_ROOT が未設定か、存在しない: $ROOT"; exit 1; }
 test -e "$B" && { echo "同名の束がある: $B"; exit 1; }
+find "$SRC" -type l | sort                                   # symlink があれば、ここで止まって本人に聞く
 find "$SRC" -type f ! -name .DS_Store ! -path '*/node_modules/*' | sort
 ```
+
+symlink が 1 つでもあれば、コピーに進まない。リンク先の実体を対象の中に写して置き換えるか、除外するかを本人に聞き、決まってから表を作り直す。`-type f` の一覧には symlink が出ないので、この確認を飛ばすと気づかないまま写される。
 
 表の形:
 
@@ -83,12 +86,11 @@ find "$SRC" -type f ! -name .DS_Store ! -path '*/node_modules/*' | sort
 ```bash
 mkdir -p "$B/final" "$B/brief" "$B/work"
 # 例: ファイル 1 つと、フォルダ 1 つ
-rsync -lt --checksum --exclude .DS_Store "$SRC/promo-16x9.mp4" "$B/final/"
-rsync -rlt --checksum --exclude .DS_Store "$SRC/promo-16x9.motion" "$B/work/"
+rsync -t --checksum --exclude .DS_Store "$SRC/promo-16x9.mp4" "$B/final/"
+rsync -rt --checksum --exclude .DS_Store "$SRC/promo-16x9.motion" "$B/work/"
 ```
 
-- `-a` ではなく `-rlt` を使う。同期フォルダに owner / group / 特殊パーミッションを持ち込まない
-- symlink は実体を写す (`-L`) のではなく、束の中では使わない。対象に symlink があれば表で示して本人に聞く
+- `-a` ではなく `-rt` を使う。同期フォルダに owner / group / 特殊パーミッションを持ち込まず、symlink も写さない (`-l` を付けると symlink が symlink のまま入り、元を消した時点でリンク先を失う)。手順 1 で symlink を 0 にしてあるので、rsync が "skipping non-regular file" を出したら手順 1 に戻る
 
 ### 3. 台帳 (README.md) を書く
 
@@ -106,9 +108,13 @@ git -C "<素材を作ったツールのリポジトリ>" log --oneline -1   # �
 両側の sha256 を突き合わせ、ファイル数と不一致 0 件を確かめる。
 
 ```bash
-cd "$B" && find final brief work -type f ! -name .DS_Store | sort | xargs shasum -a 256 > CHECKSUMS.txt
+cd "$B" && find final brief work -type f ! -name .DS_Store -print0 | sort -z | xargs -0 shasum -a 256 > CHECKSUMS.txt
+test -z "$(find "$B" -type l)" || echo "束の中に symlink がある"
 # 元のパスと束のパスの対応表 (タブ区切り) を使って元側を計算し、diff で比べる
 ```
+
+- ファイル名に空白や引用符があっても壊れないよう、`-print0` / `sort -z` / `xargs -0` でつなぐ。並び順は `sort -z` で固定する
+- 対応表も同じ理由でタブ区切りにし、読み出しは `while IFS=$'\t' read -r ...` にする
 
 照合が通ったら、束の絶対パスと、区分ごとのファイル数・合計サイズを報告する。
 
@@ -117,7 +123,7 @@ cd "$B" && find final brief work -type f ! -name .DS_Store | sort | xargs shasum
 削除は本人が「消してよい」と言ってから行う。順序は次のとおり。
 
 1. 同期が終わったことを本人に同期クライアントの表示で見てもらう (Dropbox なら Finder のアイコンが緑のチェック)。同期状態を xattr やコマンドで確かに読む方法は見つけていない (未確認)
-2. `git status --short` で対象が untracked (`??`) であることを確かめる。tracked のファイルが混ざっていれば削除しない
+2. `git ls-files -- "$SRC"` が何も出さないことを確かめる。1 行でも出れば tracked のファイルが混ざっているので削除しない。`git status --short` は変更のない tracked ファイルを表示しないため、`??` だけを見ても混在は分からない
 3. `rm -rf "$SRC"` を実行し、`git status --short` が空になったことを示す
 
 `.git/info/exclude` に対象を足せば `??` を消せるが、worktree では共通ディレクトリ側に効いて全 worktree で隠れる。既定にはせず、本人が望んだときだけ行う。
