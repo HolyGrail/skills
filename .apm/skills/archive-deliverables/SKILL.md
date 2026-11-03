@@ -48,7 +48,7 @@ $DELIVERABLE_ARCHIVE_ROOT/          # 同期フォルダの中の 1 か所。例
 | `final/` | そのまま配信・配布するもの | `*.mp4` `*.mov` `*.gif` (作業フォルダの外にあるもの)、`images/` の `*.png` `*.jpg` `*.webp`、投稿文・告知文の `*.md` (ファイル名に caption / announcement / tweet / post を含む) |
 | `brief/` | 指示書と判断の記録 | コンテ、引き継ぎ文、撮影用の SQL やフィクスチャ、仕様からの変更点、推敲の中間版。final に入らない `*.md` と `*.sql` |
 | `work/` | 再生成に要るもの | 動画エディタのプロジェクト (`*.motion/` `*.prproj` など)、`captures/`、`stills/`、`*-stills/`、`bgm/`、`*.wav`、ビルドスクリプト (`build*.mjs` など)、`project.json` |
-| 除外 | 写さないもの | `.DS_Store`、`node_modules/`、`*.tmp`、`*.log` |
+| 除外 | 写さないもの | `.DS_Store`、`node_modules/`、`*.tmp`、`*.log`、`.env` と `.env.*`、`.dev.vars` と `.dev.vars.*`、鍵や API キーを含むファイル |
 
 迷うものは `work/` に入れる。final は「公開する」の意味を持つので、公開してよいか分からないものを入れない。
 
@@ -68,8 +68,10 @@ B="$ROOT/$REPO/$KIND/$(date +%F)-$SLUG"
 test -n "$ROOT" -a -d "$ROOT" || { echo "DELIVERABLE_ARCHIVE_ROOT が未設定か、存在しない: $ROOT"; exit 1; }
 test -e "$B" && { echo "同名の束がある: $B"; exit 1; }
 find "$SRC" -type l | sort                                   # symlink があれば、ここで止まって本人に聞く
-find "$SRC" -type f ! -name .DS_Store ! -path '*/node_modules/*' | sort
+find "$SRC" -type f ! -name .DS_Store ! -path '*/node_modules/*' ! -name '*.tmp' ! -name '*.log' ! -name '.env' ! -name '.env.*' ! -name '.dev.vars' ! -name '.dev.vars.*' | sort
 ```
+
+この一覧をタブ区切りの対応表 `MAP` (元の絶対パス、区分、束の中の相対パス) にして保存する。手順 2 のコピーと手順 4 の照合はこの表だけを見る。`find` の除外に漏れた秘密のファイルが表に残っていれば、ここで取り除く。
 
 symlink が 1 つでもあれば、コピーに進まない。リンク先の実体を対象の中に写して置き換えるか、除外するかを本人に聞き、決まってから表を作り直す。`-type f` の一覧には symlink が出ないので、この確認を飛ばすと気づかないまま写される。
 
@@ -82,16 +84,18 @@ symlink が 1 つでもあれば、コピーに進まない。リンク先の実
 
 ### 2. コピーする
 
-区分ごとに `rsync` で写す。`--checksum` を付け、同名ファイルが残っていても内容で比べる。
+対応表 `MAP` の行ごとに `rsync` で 1 ファイルずつ写す。フォルダをまとめて `-r` で写すと、振り分け表に出なかった `.env` や `node_modules/` も一緒に入るので、フォルダ単位のコピーはしない。
 
 ```bash
 mkdir -p "$B/final" "$B/brief" "$B/work"
-# 例: ファイル 1 つと、フォルダ 1 つ
-rsync -t --checksum --exclude .DS_Store "$SRC/promo-16x9.mp4" "$B/final/"
-rsync -rt --checksum --exclude .DS_Store "$SRC/promo-16x9.motion" "$B/work/"
+while IFS=$'\t' read -r src kind dst; do
+  mkdir -p "$B/$(dirname "$dst")"
+  rsync -t --checksum "$src" "$B/$dst" || { echo "失敗: $src"; exit 1; }
+done < "$MAP"
 ```
 
-- `-a` ではなく `-rt` を使う。同期フォルダに owner / group / 特殊パーミッションを持ち込まず、symlink も写さない (`-l` を付けると symlink が symlink のまま入り、元を消した時点でリンク先を失う)。手順 1 で symlink を 0 にしてあるので、rsync が "skipping non-regular file" を出したら手順 1 に戻る
+- `-a` ではなく `-t` を使う。同期フォルダに owner / group / 特殊パーミッションを持ち込まず、symlink も写さない (`-l` を付けると symlink が symlink のまま入り、元を消した時点でリンク先を失う)。手順 1 で symlink を 0 にしてあるので、rsync が "skipping non-regular file" を出したら手順 1 に戻る
+- `--checksum` を付け、同名ファイルが残っていても内容で比べる
 
 ### 3. 台帳 (README.md) を書く
 
@@ -115,7 +119,7 @@ test -z "$(find "$B" -type l)" || echo "束の中に symlink がある"
 ```
 
 - ファイル名に空白や引用符があっても壊れないよう、`-print0` / `sort -z` / `xargs -0` でつなぐ。並び順は `sort -z` で固定する
-- 対応表も同じ理由でタブ区切りにし、読み出しは `while IFS=$'\t' read -r ...` にする
+- 対応表 `MAP` も同じ理由でタブ区切りにし、読み出しは `while IFS=$'\t' read -r ...` にする。元側の sha256 は `MAP` の行から計算し、束側の `CHECKSUMS.txt` と件数も含めて diff する
 
 照合が通ったら、束の絶対パスと、区分ごとのファイル数・合計サイズを報告する。
 
