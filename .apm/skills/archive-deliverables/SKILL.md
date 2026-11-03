@@ -60,6 +60,7 @@ $DELIVERABLE_ARCHIVE_ROOT/          # 同期フォルダの中の 1 か所。例
 
 ```bash
 SRC="$PWD/assets/promo"                            # 対象
+REPO_DIR="$(git rev-parse --show-toplevel)"        # 元リポジトリ。あとの手順は cd で場所が変わるので、ここで控える
 ROOT="$DELIVERABLE_ARCHIVE_ROOT"
 REPO="$(basename -s .git "$(git remote get-url origin 2>/dev/null || basename "$PWD")")"
 KIND=marketing; SLUG=spring-campaign
@@ -108,7 +109,7 @@ git -C "<素材を作ったツールのリポジトリ>" log --oneline -1   # �
 両側の sha256 を突き合わせ、ファイル数と不一致 0 件を確かめる。
 
 ```bash
-cd "$B" && find final brief work -type f ! -name .DS_Store -print0 | sort -z | xargs -0 shasum -a 256 > CHECKSUMS.txt
+(cd "$B" && find final brief work -type f ! -name .DS_Store -print0 | sort -z | xargs -0 shasum -a 256 > CHECKSUMS.txt)
 test -z "$(find "$B" -type l)" || echo "束の中に symlink がある"
 # 元のパスと束のパスの対応表 (タブ区切り) を使って元側を計算し、diff で比べる
 ```
@@ -123,7 +124,7 @@ test -z "$(find "$B" -type l)" || echo "束の中に symlink がある"
 削除は本人が「消してよい」と言ってから行う。順序は次のとおり。
 
 1. 同期が終わったことを本人に同期クライアントの表示で見てもらう (Dropbox なら Finder のアイコンが緑のチェック)。同期状態を xattr やコマンドで確かに読む方法は見つけていない (未確認)
-2. `git ls-files -- "$SRC"` が何も出さないことを確かめる。1 行でも出れば tracked のファイルが混ざっているので削除しない。`git status --short` は変更のない tracked ファイルを表示しないため、`??` だけを見ても混在は分からない
+2. 元リポジトリを基準に `TRACKED="$(git -C "$REPO_DIR" ls-files -- "$SRC")" && test -z "$TRACKED"` が真になることを確かめる。1 行でも出れば tracked のファイルが混ざっているので削除しない。`git status --short` は変更のない tracked ファイルを表示しないため、`??` だけを見ても混在は分からない。また手順 4 のあとは作業ディレクトリが束の側に移っていることがあり、そこで `git ls-files` を実行するとリポジトリ外で exit 128 を返して出力が空になる。空出力だけで判定せず、`git -C "$REPO_DIR"` で元リポジトリを指し、終了コードも見る
 3. `rm -rf "$SRC"` を実行し、`git status --short` が空になったことを示す
 
 `.git/info/exclude` に対象を足せば `??` を消せるが、worktree では共通ディレクトリ側に効いて全 worktree で隠れる。既定にはせず、本人が望んだときだけ行う。
