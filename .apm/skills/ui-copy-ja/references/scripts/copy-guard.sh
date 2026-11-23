@@ -6,6 +6,7 @@
 #       コマンドが cd してから gh を呼ぶ形なら、cd した先で実行する。
 #       PR の base (--base、gh-merge-base 設定) が既定のブランチと違えば、その base との差分を見る。
 #       --head でチェックアウト中とは別のブランチを指していれば、そのブランチを調べる。
+#       gh pr ready に番号、URL、ブランチを付けた形では、その PR の head と base を調べる。
 #       足した日本語が無い、または点検済み (mark 済み) なら素通し。未点検なら deny して手順を返す。
 #       git リポジトリでない、base が決まらないなど判定できないときは素通し (止めすぎない)。
 # 登録: settings.json の PreToolUse に、このファイルのパスを直接指定する (SKILL.md を参照)。
@@ -18,6 +19,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 cmd=""
 base=""
 head=""
+sel=""
 targets=""
 helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/copy-diff.sh"
 
@@ -27,24 +29,26 @@ case "$tool_name" in
     # gh pr create / ready が、コマンドとして実行される位置にあるときだけ対象にする。
     # 引用符の中や heredoc の本文に同じ文字列があるだけのコマンド (git commit -m '...' など) は通す。
     # 二重引用符の中でも、コマンド置換 ($(...) やバッククォート) を含むものは中を見る。
-    # 見つかれば 1 行目に hit、2 行目に --base の値、3 行目に --head の値 (無ければ空)、4 行目以降に、それより前の cd の行き先を順に出す。
+    # 見つかれば 1 行目に hit、2 行目に --base の値、3 行目に --head の値、4 行目に ready の対象 (無ければ空)、5 行目以降に、それより前の cd の行き先を順に出す。
     parsed=$(printf '%s' "$cmd" | perl -0777 -ne '
       my @q;
       s/<<-?[ \t]*(["\x27]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|\z)//gs;
       s/"((?:[^"\\]|\\.)*)"|\x27([^\x27]*)\x27/my ($dq, $sq) = ($1, $2); if (defined $dq && $dq =~ m{\$\(|`}) { " $dq " } else { push @q, defined $dq ? $dq : $sq; "\x01$#q\x01" }/ge;
-      exit unless /^(.*?)(?:^|[;&|(\{\n`])[ \t]*(?:\w+=\S*[ \t]+)*gh[ \t]+pr[ \t]+(?:create|ready)\b([^;&|\n)`]*)/s;
-      my ($pre, $rest) = ($1, $2);
+      exit unless /^(.*?)(?:^|[;&|(\{\n`])[ \t]*(?:\w+=\S*[ \t]+)*gh[ \t]+pr[ \t]+(create|ready)\b([^;&|\n)`]*)/s;
+      my ($pre, $sub, $rest) = ($1, $2, $3);
       my $base = $rest =~ /(?:--base|-B)(?:[ \t]+|=)(\S+)/ ? $1 : "";
       my $head = $rest =~ /(?:--head|-H)(?:[ \t]+|=)(\S+)/ ? $1 : "";
+      my $sel = ($sub eq "ready" && $rest =~ /^[ \t]+([^-\s]\S*)/) ? $1 : "";
       my @d;
       while ($pre =~ /(?:^|[;&|(\s])cd\s+([^\s;&|)]+)/g) { push @d, $1 }
-      for ($base, $head, @d) { s/\x01(\d+)\x01/$q[$1]/g }
-      print join("\n", "hit", $base, $head, @d);
+      for ($base, $head, $sel, @d) { s/\x01(\d+)\x01/$q[$1]/g }
+      print join("\n", "hit", $base, $head, $sel, @d);
     ' 2>/dev/null)
     [ -n "$parsed" ] || exit 0
     base=$(printf '%s\n' "$parsed" | sed -n 2p)
     head=$(printf '%s\n' "$parsed" | sed -n 3p)
-    targets=$(printf '%s\n' "$parsed" | tail -n +4)
+    sel=$(printf '%s\n' "$parsed" | sed -n 4p)
+    targets=$(printf '%s\n' "$parsed" | tail -n +5)
     ;;
   mcp__github__create_pull_request)
     base=$(printf '%s' "$input" | jq -r '.tool_input.base // ""' 2>/dev/null)
@@ -64,6 +68,20 @@ while IFS= read -r t; do
 done <<EOF
 $targets
 EOF
+# "gh pr ready <番号 | URL | ブランチ>" の形なら、その PR の head と base を gh に問い合わせる。
+# 問い合わせに失敗したとき、ブランチ名ならそのブランチを、番号と URL なら HEAD を調べる。
+if [ -n "$sel" ]; then
+  info=$(gh pr view "$sel" --json headRefName,baseRefName -q '.headRefName + " " + .baseRefName' 2>/dev/null)
+  if [ -n "$info" ]; then
+    head=${info%% *}
+    base=${info#* }
+  else
+    case "$sel" in
+      http://*|https://*) ;;
+      *[!0-9]*) head=$sel ;;
+    esac
+  fi
+fi
 # PR の base を、--base、ブランチの gh-merge-base 設定の順で決める。どちらも無ければ helper の既定に任せる。
 if [ -z "$base" ]; then
   cur=$(git branch --show-current 2>/dev/null)
