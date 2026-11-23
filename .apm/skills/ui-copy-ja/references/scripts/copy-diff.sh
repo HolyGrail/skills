@@ -6,6 +6,7 @@
 #   copy-diff.sh mark  [base]   いまの一覧を点検済みとして記録する (一覧が変わると無効になる)
 #
 # 対象: base との merge-base から HEAD までに足した行のうち、ひらがな・カタカナを含む行。
+#       コミット済みの行だけを見る。未コミットの変更は一覧に出ない。
 #       かなで判定するので、中国語・韓国語の訳は拾わない。
 # 除外: Markdown、docs/、エージェント用の設定、テスト、スナップショット、コメントだけの行。
 set -u
@@ -27,14 +28,14 @@ fi
 mb=$(git merge-base "$base" HEAD 2>/dev/null) || exit 3
 
 extract() {
-  git diff --no-color -U0 "$mb" HEAD -- . \
+  git -c core.quotePath=false diff --no-color -U0 "$mb" HEAD -- . \
     ':(exclude,glob)**/*.md' ':(exclude,glob)**/*.mdx' ':(exclude,glob)docs/**' \
     ':(exclude,glob).claude/**' ':(exclude,glob).agents/**' ':(exclude,glob).github/**' \
     ':(exclude,glob)**/__tests__/**' ':(exclude,glob)**/*.test.*' ':(exclude,glob)**/*.spec.*' \
     ':(exclude,glob)e2e/**' ':(exclude,glob)**/*.snap' ':(exclude,glob)**/fixtures/**' \
     ':(exclude,glob)seeds/**' ':(exclude,glob)scripts/**' 2>/dev/null \
   | perl -CSD -Mutf8 -ne '
-      if (m{^\+\+\+ b/(.*)$}) { $f = $1; next }
+      if (m{^\+\+\+ "?b/(.*?)"?\s*$}) { $f = $1; next }
       next unless /^\+/ && !/^\+\+\+/;
       s/^\+\s*//; s/\s+$//;
       next if m{^(//|#|\*|/\*|<!--|\{/\*)};      # コメントだけの行
