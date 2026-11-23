@@ -22,6 +22,7 @@ base=""
 head=""
 sel=""
 sub=""
+oid=""
 targets=""
 helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/copy-diff.sh"
 
@@ -75,12 +76,16 @@ $targets
 EOF
 # gh pr ready では、対象の PR の head と base を gh に問い合わせる。
 # 対象は、番号、URL、ブランチの指定があればその PR、無ければ今のブランチの PR。
+# PR の先頭のコミットが手元にあれば、そのコミットを調べる。無ければ、owner:branch として下の手順で探す。
 # 問い合わせに失敗したとき、ブランチ名ならそのブランチを、番号と URL なら HEAD を調べる。
 if [ "$sub" = ready ]; then
-  info=$(gh pr view ${sel:+"$sel"} --json headRefName,baseRefName -q '.headRefName + " " + .baseRefName' 2>/dev/null)
+  info=$(gh pr view ${sel:+"$sel"} --json headRefOid,baseRefName,headRepositoryOwner,headRefName \
+    -q '.headRefOid + " " + .baseRefName + " " + .headRepositoryOwner.login + ":" + .headRefName' 2>/dev/null)
   if [ -n "$info" ]; then
-    head=${info%% *}
-    base=${info#* }
+    oid=${info%% *}
+    info=${info#* }
+    base=${info%% *}
+    head=${info#* }
   else
     case "$sel" in
       http://*|https://*) ;;
@@ -103,7 +108,9 @@ fi
 # owner:branch の形では、owner と同じ名前のリモートがあればそのブランチを見る。
 # 無ければ、origin の URL が owner のものであるときに限り origin を見る。
 # どこにも見つからないときは、HEAD を調べる。
-if [ -n "$head" ]; then
+if [ -n "$oid" ] && git cat-file -e "$oid^{commit}" 2>/dev/null; then
+  head=$oid
+elif [ -n "$head" ]; then
   owner=""
   case "$head" in *:*) owner=${head%%:*}; head=${head##*:} ;; esac
   use_origin=1
@@ -115,8 +122,8 @@ if [ -n "$head" ]; then
   elif git rev-parse -q --verify "refs/heads/$head" >/dev/null 2>&1; then :
   else head=""
   fi
-  if [ -n "$head" ] && [ "$(git rev-parse -q --verify "$head^{commit}" 2>/dev/null)" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then head=""; fi
 fi
+if [ -n "$head" ] && [ "$(git rev-parse -q --verify "$head^{commit}" 2>/dev/null)" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then head=""; fi
 if [ -n "$head" ]; then set -- "${base:--}" "$head"
 elif [ -n "$base" ]; then set -- "$base"
 else set --
