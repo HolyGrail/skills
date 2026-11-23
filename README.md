@@ -20,9 +20,9 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 
 ## 収録 Skill / Prompt / Agent
 
-### Skills (27)
+### Skills (28)
 
-`empirical-prompt-tuning` を含む 27 個。
+`empirical-prompt-tuning` を含む 28 個。
 
 | name | 概要 (description 抜粋) |
 |---|---|
@@ -47,6 +47,7 @@ HolyGrail がローカルで使っている Claude Code 向けの **Skill / Prom
 | `task` | 自律エージェントによる多ソース反復調査 |
 | `tech-debt` | 技術的負債の優先度付き改善計画 |
 | `test-audit` | テスト追加・変更時の品質ゲートと低価値テストの監査・整理 |
+| `ui-copy-ja` | 画面の文言・通知文・告知文など短い日本語の語選びと、別の読み手による点検 (PR 前の hook 同梱) |
 | `ultrathink` | 構造化された MECE 深思考プロセス |
 | `x-research` | X (Twitter) の実データ調査を grok build CLI に委譲 |
 
