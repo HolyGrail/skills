@@ -35,7 +35,7 @@ git rev-parse -q --verify "$head^{commit}" >/dev/null 2>&1 || exit 3
 mb=$(git merge-base "$base" "$head" 2>/dev/null) || exit 3
 
 extract() {
-  git -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color -U0 "$mb" "$head" -- . \
+  git -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ -U0 "$mb" "$head" -- . \
     ':(exclude,glob)**/*.md' ':(exclude,glob)**/*.mdx' ':(exclude,glob)docs/**' \
     ':(exclude,glob).claude/**' ':(exclude,glob).agents/**' ':(exclude,glob).github/**' \
     ':(exclude,glob)**/__tests__/**' ':(exclude,glob)**/*.test.*' ':(exclude,glob)**/*.spec.*' \
