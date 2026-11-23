@@ -9,6 +9,7 @@
 #       コミット済みの行だけを見る。未コミットの変更は一覧に出ない。
 #       かなで判定するので、中国語・韓国語の訳は拾わない。
 # 除外: Markdown、docs/、エージェント用の設定、テスト、スナップショット、コメントだけの行。
+#       コメントかどうか決められない行 (JSX の本文が * や # で始まる場合など) は、一覧に残す。
 set -u
 mode=${1:-list}
 base=${2:-}
@@ -35,11 +36,38 @@ extract() {
     ':(exclude,glob)e2e/**' ':(exclude,glob)**/*.snap' ':(exclude,glob)**/fixtures/**' \
     ':(exclude,glob)seeds/**' ':(exclude,glob)scripts/**' 2>/dev/null \
   | perl -CSD -Mutf8 -ne '
+      # "#" で始まる行をコメントと見なすのは、"#" がコメントになる種類のファイルだけ。
+      sub hash_lang {
+        return $_[0] =~ m{(?:^|/)(?:Dockerfile[^/]*|Makefile|Gemfile|Rakefile|\.env[^/]*|\.gitignore)$
+                          |\.(?:sh|bash|zsh|fish|py|rb|pl|pm|ya?ml|toml|ini|cfg|conf|properties|tf|hcl|r|jl|exs?|nix|mk|cmake|ps1|graphqls?|gql|php)$}xi;
+      }
+      # "*" で始まる行をコメントと見なすのは、HEAD のファイルでブロックコメントの中にある行だけ。
+      # JSX の本文が "*" で始まる場合 (必須項目の注記など) は、一覧に残る。
+      sub in_block {
+        my ($file, $n) = @_;
+        unless ($scan{$file}) {
+          my (%c, $in, $i);
+          if (open(my $fh, "-|", "git", "show", "HEAD:$file")) {
+            while (my $l = <$fh>) {
+              $i++;
+              if ($in) { $c{$i} = 1; $in = 0 if $l =~ m{\*/} }
+              elsif ($l =~ m{(?:^|[\s\{(,;])/\*(.*)$}) { $in = 1 unless $1 =~ m{\*/} }
+            }
+            close $fh;
+          }
+          $scan{$file} = \%c;
+        }
+        return $scan{$file}{$n};
+      }
       if (m{^\+\+\+ "?b/(.*?)"?\s*$}) { $f = $1; next }
+      if (m{^@@ -\S+ \+(\d+)}) { $ln = $1; next }
       next unless /^\+/ && !/^\+\+\+/;
+      my $n = $ln++;
       s/^\+\s*//; s/\s+$//;
-      next if m{^(//|#|\*|/\*|<!--|\{/\*)};      # コメントだけの行
-      next unless /[\x{3041}-\x{3096}\x{30A1}-\x{30FA}]/;   # かなを含む行だけ
+      next unless /[\x{3041}-\x{3096}\x{30A1}-\x{30FA}]/;
+      next if m{^(//|/\*|<!--|\{/\*)};
+      next if /^#/ && hash_lang($f);
+      next if /^\*/ && in_block($f, $n);
       print "$f: $_\n";
     '
 }

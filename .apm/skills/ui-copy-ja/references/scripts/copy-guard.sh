@@ -12,12 +12,28 @@ input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 cmd=""
+target=""
 helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/copy-diff.sh"
 
 case "$tool_name" in
   Bash)
     cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
-    printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+pr[[:space:]]+(create|ready)' || exit 0
+    # gh pr create / ready が、コマンドとして実行される位置にあるときだけ対象にする。
+    # 引用符の中や heredoc の本文に同じ文字列があるだけのコマンド (git commit -m '...' など) は通す。
+    # 見つかれば 1 行目に hit、2 行目に、それより前にある最後の cd の行き先 (無ければ空) を出す。
+    parsed=$(printf '%s' "$cmd" | perl -0777 -ne '
+      my @q;
+      s/<<-?[ \t]*(["\x27]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|\z)//gs;
+      s/"((?:[^"\\]|\\.)*)"|\x27([^\x27]*)\x27/push @q, defined $1 ? $1 : $2; "\x01$#q\x01"/ge;
+      exit unless /^(.*?)(?:^|[;&|(){}\n])[ \t]*(?:\w+=\S*[ \t]+)*gh[ \t]+pr[ \t]+(?:create|ready)\b/s;
+      my ($pre, $d) = ($1, "");
+      while ($pre =~ /(?:^|[;&|(\s])cd\s+([^\s;&|)]+)/g) { $d = $1 }
+      $d =~ s/\x01(\d+)\x01/$q[$1]/g;
+      print "hit\n$d";
+    ' 2>/dev/null)
+    [ -n "$parsed" ] || exit 0
+    target=${parsed#hit}
+    target=${target#$'\n'}
     ;;
   mcp__github__create_pull_request) ;;
   *) exit 0 ;;
@@ -26,19 +42,9 @@ esac
 [ -f "$helper" ] || exit 0
 [ -n "$cwd" ] && cd "$cwd" 2>/dev/null || exit 0
 # "cd <dir> && gh pr create" の形なら、gh が実際に動くディレクトリを対象にする。
-# gh pr より前にある最後の cd を見る。変数を含むなど解決できない行き先は、セッションの cwd のままにする。
-if [ -n "$cmd" ]; then
-  target=$(printf '%s' "$cmd" | perl -0777 -ne '
-    exit unless /^(.*?)gh\s+pr\s+(?:create|ready)/s;
-    my ($pre, $d) = ($1);
-    while ($pre =~ /(?:^|[;&|(\s])cd\s+(?:"([^"]*)"|\x27([^\x27]*)\x27|([^\s;&|)]+))/g) {
-      $d = defined $1 ? $1 : defined $2 ? $2 : $3;
-    }
-    print $d if defined $d;
-  ' 2>/dev/null)
-  case "$target" in "~"|"~/"*) target="$HOME${target#\~}" ;; esac
-  [ -n "$target" ] && cd "$target" 2>/dev/null
-fi
+# 変数を含むなど解決できない行き先は、セッションの cwd のままにする。
+case "$target" in "~"|"~/"*) target="$HOME${target#\~}" ;; esac
+[ -n "$target" ] && cd "$target" 2>/dev/null
 bash "$helper" check >/dev/null 2>&1
 [ $? -eq 1 ] || exit 0
 
