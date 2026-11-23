@@ -13,6 +13,7 @@
 #       copy-diff.sh を自分の場所から探すので、別の場所へコピーしない。jq が要る。
 # 限界: コマンドの文字列を近似的に読むだけで、シェルとして解釈はしない。sudo や eval、エイリアス、
 #       スクリプトの中からの実行、gh の -R / --repo で別のリポジトリを指す形は対象にならない。
+#       gh pr ready --undo=false のように値を付けた形は、--undo と同じく対象にならない。
 #       フォークのブランチ (--head owner:branch) は、owner と同じ名前のリモートを取得済みのときだけ調べられる。
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)
@@ -31,6 +32,7 @@ case "$tool_name" in
     cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
     # gh pr create / ready が、コマンドとして実行される位置にあるときだけ対象にする。
     # 引用符の中や heredoc の本文に同じ文字列があるだけのコマンド (git commit -m '...' など) は通す。
+    # --help / -h を付けたコマンドは、ヘルプを表示するだけなので、対象にしない。
     # gh pr ready --undo は Draft に戻す操作なので、対象にしない。同じコマンドに続きがあれば、最初の対象外でないものを見る。
     # かっこで囲んだ中 (サブシェルやコマンド置換) で閉じている cd は、外の行き先に数えない。
     # 行末の \ で次の行に続けたコマンドは、1 行につないでから読む。
@@ -48,6 +50,7 @@ case "$tool_name" in
         my ($i, $txt) = @$c;
         while ($txt =~ /$re/g) {
           next if $1 eq "ready" && $2 =~ /(?:^|\s)--undo\b/;
+          next if $2 =~ /(?:^|\s)(?:--help|-h)(?:\s|$)/;
           ($pre, $sub, $rest) = (substr($txt, 0, $-[0]), $1, $2);
           $pre = substr($_, 0, index($_, "\x01$i\x01")) . " " . $pre if defined $i;
           last;
