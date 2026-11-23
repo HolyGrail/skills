@@ -31,16 +31,22 @@ case "$tool_name" in
     cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
     # gh pr create / ready が、コマンドとして実行される位置にあるときだけ対象にする。
     # 引用符の中や heredoc の本文に同じ文字列があるだけのコマンド (git commit -m '...' など) は通す。
-    # gh pr ready --undo は Draft に戻す操作なので、対象にしない。
+    # gh pr ready --undo は Draft に戻す操作なので、対象にしない。同じコマンドに続きがあれば、最初の対象外でないものを見る。
+    # かっこで囲んだ中 (サブシェルやコマンド置換) で閉じている cd は、外の行き先に数えない。
     # 二重引用符の中でも、コマンド置換 ($(...) やバッククォート) を含むものは中を見る。
     # 見つかれば 1 行目に hit、2 行目に --base の値、3 行目に --head の値、4 行目に ready の対象 (無ければ空)、5 行目に create か ready か、6 行目以降に、それより前の cd の行き先を順に出す。
     parsed=$(printf '%s' "$cmd" | perl -0777 -ne '
       my @q;
       s/<<-?[ \t]*(["\x27]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|\z)//gs;
       s/"((?:[^"\\]|\\.)*)"|\x27([^\x27]*)\x27/my ($dq, $sq) = ($1, $2); if (defined $dq && $dq =~ m{\$\(|`}) { " $dq " } else { push @q, defined $dq ? $dq : $sq; "\x01$#q\x01" }/ge;
-      exit unless /^(.*?)(?:^|[;&|(\{\n`])[ \t]*(?:\w+=\S*[ \t]+)*gh[ \t]+pr[ \t]+(create|ready)\b([^;&|\n)`]*)/s;
-      my ($pre, $sub, $rest) = ($1, $2, $3);
-      exit if $sub eq "ready" && $rest =~ /(?:^|\s)--undo\b/;
+      my ($pre, $sub, $rest);
+      while (/(?:^|[;&|(\{\n`])[ \t]*(?:\w+=\S*[ \t]+)*gh[ \t]+pr[ \t]+(create|ready)\b([^;&|\n)`]*)/g) {
+        next if $1 eq "ready" && $2 =~ /(?:^|\s)--undo\b/;
+        ($pre, $sub, $rest) = (substr($_, 0, $-[0]), $1, $2);
+        last;
+      }
+      exit unless defined $sub;
+      1 while $pre =~ s/\$?\([^()]*\)//;
       my $base = $rest =~ /(?:--base|-B)(?:[ \t]+|=)(\S+)/ ? $1 : "";
       my $head = $rest =~ /(?:--head|-H)(?:[ \t]+|=)(\S+)/ ? $1 : "";
       my $sel = ($sub eq "ready" && $rest =~ /^[ \t]+([^-\s]\S*)/) ? $1 : "";
