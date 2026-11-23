@@ -50,6 +50,6 @@ hash=$(printf '%s' "$list" | shasum -a 256 | cut -c1-32)
 case "$mode" in
   list)  [ -n "$list" ] && printf '%s\n' "$list"; exit 0 ;;
   check) [ -z "$list" ] && exit 0; [ -f "$cache/$hash" ] && exit 0; exit 1 ;;
-  mark)  mkdir -p "$cache" && : > "$cache/$hash" && echo "点検済みとして記録しました (${hash})"; exit 0 ;;
+  mark)  mkdir -p "$cache" && : > "$cache/$hash" && echo "点検済みとして記録しました"; exit 0 ;;
   *)     echo "usage: copy-diff.sh list|check|mark [base]" >&2; exit 2 ;;
 esac
