@@ -20,6 +20,7 @@ cmd=""
 base=""
 head=""
 sel=""
+sub=""
 targets=""
 helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/copy-diff.sh"
 
@@ -29,7 +30,7 @@ case "$tool_name" in
     # gh pr create / ready が、コマンドとして実行される位置にあるときだけ対象にする。
     # 引用符の中や heredoc の本文に同じ文字列があるだけのコマンド (git commit -m '...' など) は通す。
     # 二重引用符の中でも、コマンド置換 ($(...) やバッククォート) を含むものは中を見る。
-    # 見つかれば 1 行目に hit、2 行目に --base の値、3 行目に --head の値、4 行目に ready の対象 (無ければ空)、5 行目以降に、それより前の cd の行き先を順に出す。
+    # 見つかれば 1 行目に hit、2 行目に --base の値、3 行目に --head の値、4 行目に ready の対象 (無ければ空)、5 行目に create か ready か、6 行目以降に、それより前の cd の行き先を順に出す。
     parsed=$(printf '%s' "$cmd" | perl -0777 -ne '
       my @q;
       s/<<-?[ \t]*(["\x27]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|\z)//gs;
@@ -42,13 +43,14 @@ case "$tool_name" in
       my @d;
       while ($pre =~ /(?:^|[;&|(\s])cd\s+([^\s;&|)]+)/g) { push @d, $1 }
       for ($base, $head, $sel, @d) { s/\x01(\d+)\x01/$q[$1]/g }
-      print join("\n", "hit", $base, $head, $sel, @d);
+      print join("\n", "hit", $base, $head, $sel, $sub, @d);
     ' 2>/dev/null)
     [ -n "$parsed" ] || exit 0
     base=$(printf '%s\n' "$parsed" | sed -n 2p)
     head=$(printf '%s\n' "$parsed" | sed -n 3p)
     sel=$(printf '%s\n' "$parsed" | sed -n 4p)
-    targets=$(printf '%s\n' "$parsed" | tail -n +5)
+    sub=$(printf '%s\n' "$parsed" | sed -n 5p)
+    targets=$(printf '%s\n' "$parsed" | tail -n +6)
     ;;
   mcp__github__create_pull_request)
     base=$(printf '%s' "$input" | jq -r '.tool_input.base // ""' 2>/dev/null)
@@ -68,10 +70,11 @@ while IFS= read -r t; do
 done <<EOF
 $targets
 EOF
-# "gh pr ready <番号 | URL | ブランチ>" の形なら、その PR の head と base を gh に問い合わせる。
+# gh pr ready では、対象の PR の head と base を gh に問い合わせる。
+# 対象は、番号、URL、ブランチの指定があればその PR、無ければ今のブランチの PR。
 # 問い合わせに失敗したとき、ブランチ名ならそのブランチを、番号と URL なら HEAD を調べる。
-if [ -n "$sel" ]; then
-  info=$(gh pr view "$sel" --json headRefName,baseRefName -q '.headRefName + " " + .baseRefName' 2>/dev/null)
+if [ "$sub" = ready ]; then
+  info=$(gh pr view ${sel:+"$sel"} --json headRefName,baseRefName -q '.headRefName + " " + .baseRefName' 2>/dev/null)
   if [ -n "$info" ]; then
     head=${info%% *}
     base=${info#* }
@@ -93,11 +96,12 @@ if [ -n "$base" ]; then
   fi
 fi
 # --head でチェックアウト中とは別のブランチを指しているときは、そのブランチを調べる。
-# owner:branch の形は branch だけを見る。手元でも origin でも見つからないときは、HEAD を調べる。
+# PR に入るのはリモートのブランチなので、origin のものを先に見る。owner:branch の形は branch だけを見る。
+# origin でも手元でも見つからないときは、HEAD を調べる。
 if [ -n "$head" ]; then
   head=${head##*:}
-  if git rev-parse -q --verify "refs/heads/$head" >/dev/null 2>&1; then :
-  elif git rev-parse -q --verify "origin/$head" >/dev/null 2>&1; then head="origin/$head"
+  if git rev-parse -q --verify "refs/remotes/origin/$head" >/dev/null 2>&1; then head="origin/$head"
+  elif git rev-parse -q --verify "refs/heads/$head" >/dev/null 2>&1; then :
   else head=""
   fi
   if [ -n "$head" ] && [ "$(git rev-parse -q --verify "$head^{commit}" 2>/dev/null)" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then head=""; fi
